@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- Unlisted: this link is sent to brands on purpose, so keep it out of search engines. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <title>byalyxx · Media kit</title>
+    <meta name="description" content="Live audience stats, brand deliverables and partners for byalyxx." />
+    <meta name="theme-color" content="#161616" />
+    <link rel="icon" href="assets/icon.png" type="image/png" />
+    <link rel="preload" href="assets/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <p class="sample-banner" id="sample-banner" hidden>
+        Sample data. These numbers only show the layout. Real figures go in <code>js/data.js</code>.
+      </p>
+
+      <!-- 1. Control bar: platform pills on the left, date range on the right -->
+      <div class="controls">
+        <div class="pills" role="tablist" aria-label="Platform" id="platform-tabs"></div>
+        <button type="button" class="pill date-chip" id="date-chip" aria-haspopup="dialog">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></svg>
+          <span id="date-label">Last 30 days</span>
+        </button>
+      </div>
+
+      <!-- 2. Analytics: everything lives inside this one container -->
+      <section class="card analytics" id="analytics" role="tabpanel" aria-live="polite"></section>
+
+      <!-- 3. Past deliverables -->
+      <section class="block" aria-labelledby="deliverables-title">
+        <h2 class="block-title" id="deliverables-title">Past deliverables</h2>
+        <div class="scroller" id="deliverables" tabindex="0" role="region" aria-label="Past deliverables, scrolls sideways"></div>
+      </section>
+
+      <!-- 4. Partners -->
+      <section class="block" aria-labelledby="partners-title">
+        <h2 class="block-title" id="partners-title">Partners</h2>
+        <ul class="card partners" id="partners"></ul>
+      </section>
+
+      <footer class="footer" id="footer"></footer>
+    </div>
+
+    <!-- Date range picker -->
+    <dialog class="picker" id="picker" aria-labelledby="picker-title">
+      <form method="dialog" class="picker-inner">
+        <h2 class="sr-only" id="picker-title">Choose a date range</h2>
+        <ul class="presets" id="presets"></ul>
+        <div class="calendars">
+          <div class="cal-nav">
+            <button type="button" class="icon-btn" id="cal-prev" aria-label="Previous month">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg>
+            </button>
+            <button type="button" class="icon-btn" id="cal-next" aria-label="Next month">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+            </button>
+          </div>
+          <div class="months" id="months"></div>
+        </div>
+        <div class="picker-foot">
+          <p class="picker-range" id="picker-range"></p>
+          <div class="picker-actions">
+            <button type="button" class="btn" id="picker-cancel">Cancel</button>
+            <button type="button" class="btn btn-solid" id="picker-apply">Apply</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="js/data.js"></script>
+    <script src="js/platforms.js"></script>
+    <script src="js/sample.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

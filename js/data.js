@@ -1,0 +1,52 @@
+// The media kit's numbers. This is the only file you need to edit.
+//
+// Rules the page follows:
+// - A metric with no data is left out, never shown as zero.
+// - Nothing is carried from one platform to another.
+// - Keep these in line with byalyxx.com/media-kit while both are online.
+//
+// `snapshot` holds figures you only have as a single total (shown as-is, whatever the date range).
+// `days` holds one entry per day, oldest first, so every date range can be worked out:
+//   { date: "2026-10-21", hours: [24 numbers, optional, for the chart on single-day ranges],
+//     m: { ...daily totals }, l: { listName: { "Row label": number } } }
+// The keys each platform understands are listed in js/platforms.js.
+
+window.MEDIA_KIT = {
+  // Date the numbers were last brought up to date (YYYY-MM-DD).
+  updated: "2026-09-23",
+  email: "byalyxx@gmail.com",
+
+  platforms: {
+    tiktok: {
+      handle: "@byalyxx",
+      url: "https://www.tiktok.com/@byalyxx",
+      // Same figure as byalyxx.com/media-kit (Sep 23, 2026).
+      snapshot: { followers: "7k+" },
+      days: [],
+    },
+    instagram: {
+      handle: "@byalyxx",
+      url: "https://www.instagram.com/byalyxx/",
+      snapshot: { followers: "900+" },
+      days: [],
+    },
+    youtube: {
+      handle: "@byalyxx",
+      url: "https://www.youtube.com/@byalyxx",
+      snapshot: { subscribers: "600+" },
+      days: [],
+    },
+  },
+
+  // Brand work, best first: the first three are what a brand sees without scrolling.
+  // { brand: "Flexispot", title: "E7 Pro desk setup", platform: "tiktok" | "instagram" | "youtube",
+  //   url: "https://…", thumb: "assets/deliverables/flexispot.jpg" (9:16 image), alt: "What the frame shows" }
+  deliverables: [],
+
+  partners: [
+    { name: "Flexispot", logo: "assets/partners/flexispot.jpg" },
+    { name: "Blacklyte", logo: "assets/partners/blacklyte.jpg" },
+    { name: "Gravastar", logo: "assets/partners/gravastar.jpg" },
+    { name: "Hex Gaming", logo: "assets/partners/hex-gaming.jpg" },
+  ],
+};
