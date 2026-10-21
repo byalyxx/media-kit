@@ -38,9 +38,19 @@ window.MEDIA_KIT = {
     },
   },
 
+  // The All tab. Per-platform totals (views, followers, engagements) are worked out from the
+  // platform days above, using the metrics in each platform's `combined` entry (js/platforms.js).
+  // Add a day here only for what the platforms can't give on their own:
+  //   { date: "2026-10-21",
+  //     views: { tiktok: 9120, instagram: 3400, youtube: 700 },        optional, overrides the worked-out totals
+  //     hours: { tiktok: [24 numbers], instagram: [...], youtube: [...] }, views per hour, for single-day ranges
+  //     l: { countries: { "United Kingdom": 4300, ... } } }              views by country, all three platforms together
+  all: { days: [] },
+
   // Brand work, best first: the first three are what a brand sees without scrolling.
   // { brand: "Flexispot", title: "E7 Pro desk setup", platform: "tiktok" | "instagram" | "youtube",
-  //   url: "https://…", thumb: "assets/deliverables/flexispot.jpg" (9:16 image), alt: "What the frame shows" }
+  //   url: "https://…", thumb: "assets/deliverables/flexispot.jpg" (9:16 image), alt: "What the frame shows",
+  //   views: 182000 (all-time views, for the All tab's top deliverables list) }
   deliverables: [],
 
   partners: [

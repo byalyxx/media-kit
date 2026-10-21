@@ -51,6 +51,11 @@
   --muted: #8e8e8e;
   --live: #3b82f6; /* the live dot, nowhere else */
   --stroke: #a0a0a0;
+  /* Platform colours for the All tab's stacked bands and tooltip dots, and nowhere else: each brand's
+     hue (TikTok cyan, Instagram magenta, YouTube red), desaturated to sit quietly on the dark card. */
+  --tiktok: #5aa7a8;
+  --instagram: #b072a8;
+  --youtube: #c25b4f;
 
   --gutter: 16px;
   --pad: 20px; /* analytics container padding */
@@ -145,51 +150,20 @@ svg {
   gap: 12px;
   margin-bottom: -16px;
 }
-.pills {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--card);
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: color var(--duration) var(--ease), background-color var(--duration) var(--ease), border-color var(--duration) var(--ease);
-}
-.pill:hover {
-  color: var(--fg);
-}
-.pill svg {
+.date-chip svg {
   width: 16px;
   height: 16px;
   flex: none;
-}
-.pill[aria-selected="true"] {
-  background: var(--fg);
-  border-color: var(--fg);
-  color: var(--page);
-}
-/* TikTok's mark is black and white: flip it on the light active pill */
-.pill[aria-selected="true"] .mono {
-  color: var(--page);
-}
-.date-chip svg {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.6;
   stroke-linecap: round;
 }
-.date-chip {
-  color: var(--fg);
+/* Platform icons make the pill row too wide for small phones: names only there */
+@media (max-width: 420px) {
+  .platform-tabs .site-tab svg {
+    display: none;
+  }
 }
 
 /* ---------- Cards ---------- */
@@ -280,6 +254,15 @@ svg {
   color: var(--fg);
   overflow-wrap: anywhere;
 }
+.kpi .delta {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .kpi .note {
   display: block;
   margin-top: 4px;
@@ -318,6 +301,16 @@ svg {
   height: 100%;
   overflow: visible;
 }
+.chart {
+  position: relative;
+}
+.chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 18px;
+}
 .plot .s-current {
   fill: none;
   stroke: var(--stroke);
@@ -331,18 +324,35 @@ svg {
   stroke-dasharray: 1 4;
   stroke-linecap: round;
 }
+.plot .band {
+  fill: var(--c);
+  fill-opacity: 0.45;
+}
+.plot .band-edge,
+.plot .s-index {
+  fill: none;
+  stroke: var(--c);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
 .plot .s-rule {
-  stroke: var(--hairline);
+  stroke: rgba(255, 255, 255, 0.22);
   stroke-width: 1;
 }
+/* Markers on the series: filled for solid lines, a ring for the dotted comparison */
 .dot {
   position: absolute;
-  width: 8px;
-  height: 8px;
-  margin: -4px 0 0 -4px;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
   border-radius: 50%;
-  background: var(--stroke);
+  background: var(--c, var(--stroke));
+  box-shadow: 0 0 0 2px var(--card);
   pointer-events: none;
+}
+.dot.ring {
+  background: var(--card);
+  border: 2px solid var(--c, var(--stroke));
 }
 .axis {
   position: relative;
@@ -360,12 +370,13 @@ svg {
 .axis span:last-child {
   transform: translateX(-100%);
 }
+
+/* Tooltip: one component for every chart */
 .tip {
   position: absolute;
-  top: 8px;
   z-index: 5;
-  width: 240px;
-  max-width: calc(100% - 8px);
+  width: 264px;
+  max-width: 100%;
   padding: 12px 14px;
   background: var(--row);
   border: 1px solid var(--border);
@@ -373,44 +384,68 @@ svg {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   pointer-events: none;
   font-size: 14px;
+  font-variant-numeric: tabular-nums;
 }
-.tip h3 {
-  margin: 0 0 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--hairline);
+.tip-heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg);
+}
+.tip-compare {
+  margin: 2px 0 0;
   font-size: 13px;
-  font-weight: 400;
   color: var(--muted);
 }
 .tip dl {
-  margin: 0;
+  margin: 10px 0 0;
   display: grid;
-  gap: 6px;
-}
-.tip div {
-  display: flex;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 10px;
+  gap: 7px 10px;
+}
+.tip-row {
+  display: contents;
 }
 .tip dt {
-  flex: 1;
   min-width: 0;
   color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tip dd {
   margin: 0;
+  text-align: right;
   font-weight: 500;
-  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.tip dd.extra {
+  min-width: 3.2em;
+  font-weight: 400;
+  color: var(--muted);
+}
+.tip-row.total dt,
+.tip-row.total dd:not(.extra) {
+  font-weight: 600;
+}
+.tip-rule {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 1px 0;
+  border: 0;
+  border-top: 1px solid var(--hairline);
 }
 .marker {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 1.5px solid var(--stroke);
-  flex: none;
 }
-.marker.dotted {
-  border-style: dotted;
+.marker.m-dot {
+  background: var(--c);
+}
+.marker.m-ring {
+  border: 2px solid var(--c);
 }
 .chart-legend {
   display: flex;
@@ -424,12 +459,18 @@ svg {
   align-items: center;
   gap: 8px;
 }
-.chart-legend i {
+.chart-legend .line {
   width: 16px;
-  border-top: 1.5px solid var(--stroke);
+  border-top: 2px solid var(--c, var(--stroke));
 }
-.chart-legend i.dotted {
+.chart-legend .line.dotted {
   border-top-style: dotted;
+}
+.chart-legend .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--c);
 }
 
 /* Lists: two columns split by a vertical hairline, stacked on phones */
@@ -474,37 +515,9 @@ svg {
   font-size: 17px;
   font-weight: 600;
 }
-.select {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-.select select {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  padding: 4px 22px 4px 6px;
-  border-radius: var(--radius-control);
+.list-note {
+  font-size: 13px;
   color: var(--muted);
-  font-size: 15px;
-  cursor: pointer;
-}
-.select select:hover {
-  color: var(--fg);
-}
-.select svg {
-  position: absolute;
-  right: 4px;
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: var(--muted);
-  stroke-width: 2;
-  pointer-events: none;
-}
-.select option {
-  background: var(--row);
-  color: var(--fg);
 }
 .rows {
   list-style: none;
@@ -571,6 +584,12 @@ svg {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+.ico.brand {
+  color: var(--fg);
+}
+.ico.brand svg {
+  stroke: none;
 }
 .ico svg {
   width: 13px;
@@ -913,23 +932,6 @@ a.deliverable:hover {
   gap: 8px;
   margin-left: auto;
 }
-.btn {
-  height: 36px;
-  padding: 0 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--card);
-  color: var(--fg);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.btn-solid {
-  background: var(--fg);
-  border-color: var(--fg);
-  color: var(--page);
-}
-
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

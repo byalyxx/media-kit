@@ -1,0 +1,185 @@
+/*
+  Control primitives ported from the main site (byalyxx/site-), so both sites share the same components.
+  Each class is the Tailwind utility list from the source, resolved to its exact values with the
+  main site's dark tokens. Don't restyle these to suit the dashboard: change them in the main site
+  first, then port the change here.
+
+    .site-button      buttonClass                components/home/hero.tsx
+    .site-nav         the <nav> pill group        components/home/site-nav.tsx
+    .site-nav-item    itemClass (+ active state)  components/home/site-nav.tsx
+    .site-submit      solid submit button         components/home/forms.tsx (ContactForm)
+
+  Built here from the same tokens, because the main site has no equivalent (see js/ui.js):
+    .site-tab         a text item for the nav pill group (itemClass without the fixed 36px square)
+    .site-select      a native <select> wearing buttonClass
+*/
+
+:root {
+  /* app/tokens.css, .dark .site */
+  --site-bg: #161616;
+  --site-surface: #1a1a1a;
+  --site-border: #272727;
+  --site-line: #222222;
+  --site-fg: #fafafa;
+  --site-muted: #ababab;
+  --site-accent: #fafafa;
+  --site-accent-fg: #161616;
+  --spacing-control: 36px;
+  --spacing-field: 40px;
+  --radius-control: 8px;
+  --radius-pill: 999px;
+  --ease-site: cubic-bezier(0.44, 0, 0.56, 1);
+  --duration-site: 300ms;
+}
+
+/* site-transition utility */
+.site-button,
+.site-nav-item,
+.site-tab,
+.site-submit {
+  transition-property: color, background-color, border-color, opacity, transform;
+  transition-timing-function: var(--ease-site);
+  transition-duration: var(--duration-site);
+}
+
+/* buttonClass:
+   inline-flex h-control items-center gap-2 rounded-control border border-site-border bg-site-surface px-4
+   text-copy font-semibold text-site-fg site-transition hover:border-site-muted
+   focus-visible:outline-2 focus-visible:outline-site-fg */
+.site-button {
+  display: inline-flex;
+  height: var(--spacing-control);
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--site-border);
+  background-color: var(--site-surface);
+  padding: 0 16px;
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--site-fg);
+  cursor: pointer;
+}
+.site-button:hover {
+  border-color: var(--site-muted);
+}
+
+/* <nav>: flex w-fit gap-1 rounded-pill border border-site-border bg-site-surface p-1.5 shadow-sm */
+.site-nav {
+  display: flex;
+  width: fit-content;
+  gap: 4px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--site-border);
+  background-color: var(--site-surface);
+  padding: 6px;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+
+/* itemClass:
+   relative grid size-control place-items-center rounded-pill text-site-muted site-transition
+   hover:bg-site-bg hover:text-site-fg focus-visible:outline-2 focus-visible:outline-site-fg
+   active: border border-site-border bg-site-bg text-site-fg */
+.site-nav-item,
+.site-tab {
+  position: relative;
+  display: grid;
+  width: var(--spacing-control);
+  height: var(--spacing-control);
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--site-muted);
+  cursor: pointer;
+}
+.site-nav-item:hover,
+.site-tab:hover {
+  background-color: var(--site-bg);
+  color: var(--site-fg);
+}
+.site-nav-item[aria-current="page"],
+.site-tab[aria-selected="true"] {
+  border: 1px solid var(--site-border);
+  background-color: var(--site-bg);
+  color: var(--site-fg);
+}
+
+/* The text version: same item, sized by its label instead of a 36px square (px-3 gap-2 text-copy font-medium) */
+.site-tab {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.site-tab svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* ContactForm submit:
+   h-field rounded-control bg-site-accent text-copy font-semibold text-site-accent-fg site-transition
+   hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-site-fg
+   (the form gives it its width; here it gets buttonClass's px-4) */
+.site-submit {
+  height: var(--spacing-field);
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background-color: var(--site-accent);
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--site-accent-fg);
+  cursor: pointer;
+}
+.site-submit:hover {
+  opacity: 0.85;
+}
+
+/* A native select that looks like buttonClass, with a chevron (lucide ChevronDown, size-4) */
+.site-select {
+  position: relative;
+  display: inline-flex;
+}
+.site-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+}
+.site-select svg {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  fill: none;
+  stroke: var(--site-muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.site-select option {
+  background: var(--site-surface);
+  color: var(--site-fg);
+}
+
+.site-button:focus-visible,
+.site-nav-item:focus-visible,
+.site-tab:focus-visible {
+  outline: 2px solid var(--site-fg);
+  outline-offset: 0;
+}
+.site-submit:focus-visible {
+  outline: 2px solid var(--site-fg);
+  outline-offset: 2px;
+}

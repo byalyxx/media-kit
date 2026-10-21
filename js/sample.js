@@ -10,7 +10,7 @@ window.makeSampleData = function (real) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  const DAYS = 150;
+  const DAYS = 200; // enough for a 90-day range plus the 90 days before it
   const today = new Date();
   const end = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
   const iso = (t) => new Date(t).toISOString().slice(0, 10);
@@ -45,7 +45,7 @@ window.makeSampleData = function (real) {
   }
 
   const tt = curve(9000, 3);
-  let ttFollowers = 6100;
+  let ttFollowers = 5400;
   const tiktok = build(tt, (v) => {
     ttFollowers += Math.round(v / 900);
     return {
@@ -60,11 +60,17 @@ window.makeSampleData = function (real) {
   });
 
   const ig = curve(2600, 4);
-  let igFollowers = 820;
-  const instagram = build(ig, (v) => {
+  let igFollowers = 560;
+  const igPlays = [];
+  const instagram = build(ig, (v, i) => {
     igFollowers += Math.round(v / 1500);
+    const plays = Math.round(v * (1.25 + rand() * 0.2));
+    igPlays[i] = plays;
     return {
-      m: { reach: v, followers: igFollowers, accountsEngaged: Math.round(v * 0.05), profileVisits: Math.round(v * 0.02) },
+      m: {
+        reach: v, plays, followers: igFollowers, accountsEngaged: Math.round(v * 0.05), profileVisits: Math.round(v * 0.02),
+        likes: Math.round(plays * 0.045), comments: Math.round(plays * 0.003), shares: Math.round(plays * 0.004),
+      },
       l: {
         topPosts: split(v, videos(8, "Sample reel")),
         contentReach: split(v, { Reels: 81, Posts: 11, Stories: 8 }),
@@ -75,12 +81,15 @@ window.makeSampleData = function (real) {
   });
 
   const yt = curve(700, 3);
-  let ytSubs = 540;
+  let ytSubs = 380;
   const youtube = build(yt, (v) => {
     ytSubs += Math.round(v / 600);
     const impressions = Math.round(v * (11 + rand() * 3));
     return {
-      m: { views: v, subscribers: ytSubs, watchMinutes: Math.round(v * (2.6 + rand() * 0.8)), impressions, impressionClicks: Math.round(impressions * 0.058) },
+      m: {
+        views: v, subscribers: ytSubs, watchMinutes: Math.round(v * (2.6 + rand() * 0.8)), impressions, impressionClicks: Math.round(impressions * 0.058),
+        likes: Math.round(v * 0.04), comments: Math.round(v * 0.005), shares: Math.round(v * 0.002),
+      },
       l: {
         topVideos: split(v, videos(8, "Sample video")),
         trafficSources: split(v, { "Browse features": 38, "YouTube search": 24, "Suggested videos": 27, External: 7, "Channel pages": 4 }),
@@ -90,8 +99,22 @@ window.makeSampleData = function (real) {
     };
   });
 
+  // The All tab works out per-platform totals from the data above. `all.days` only adds what the
+  // platforms can't give on their own: views by country across all three, and hourly Instagram plays.
+  const all = tiktok.map((d, i) => {
+    const countries = split(d.m.views + igPlays[i] + youtube[i].m.views, {
+      "United Kingdom": 33, "United States": 19, Germany: 7, Canada: 6, Australia: 5, India: 3, Netherlands: 4, Ireland: 3, France: 3, Poland: 2,
+    });
+    return {
+      date: d.date,
+      hours: { tiktok: d.hours, instagram: hoursFor(igPlays[i]), youtube: youtube[i].hours },
+      l: { countries },
+    };
+  });
+
   return {
     ...real,
+    all: { days: all },
     sample: true,
     updated: iso(end),
     platforms: {
@@ -105,6 +128,7 @@ window.makeSampleData = function (real) {
           brand: `Sample brand ${String.fromCharCode(65 + i)}`,
           title: `Sample deliverable ${i + 1}`,
           platform: p,
+          views: [182000, 64000, 41500, 23800, 12900, 98000, 7600][i],
         })),
   };
 };

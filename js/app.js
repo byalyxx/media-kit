@@ -35,16 +35,21 @@
     },
   ];
 
+
   // ---------- State ----------
 
+  const TABS = ["all", ...ORDER];
   const state = {
-    platform: ORDER.includes(location.hash.slice(1)) ? location.hash.slice(1) : "tiktok",
+    platform: TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "all",
     range: { ...PRESETS[3].range(), preset: "30d" },
     show: {}, // per list: "count" or "share"
+    chartMode: "stacked", // All tab: "stacked" or "indexed"
   };
+  const NAMES = { all: "All", tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube" };
 
   // ---------- Formatting ----------
 
+  // KPI row: thousands separators, abbreviated above 10,000. Everywhere else shows the exact figure.
   function format(v, kind) {
     if (typeof v === "string") return v; // snapshot figures like "7k+" are shown exactly as written
     if (v == null || !isFinite(v)) return null;
@@ -65,9 +70,20 @@
     const a = Math.abs(v);
     if (a >= 1e6) return `${trim(v / 1e6)}M`;
     if (a >= 1e4) return `${trim(v / 1e3)}K`;
-    return Math.round(v).toLocaleString("en-GB");
+    return exact(v);
   }
   const trim = (n) => (n >= 100 ? Math.round(n).toString() : n.toFixed(1).replace(/\.0$/, ""));
+  const exact = (v) => Math.round(v).toLocaleString("en-GB");
+  const signed = (n, digits, unit) => {
+    const r = Number(n.toFixed(digits)); // so -0.04 reads "0.0", not "−0.0"
+    return `${r > 0 ? "+" : r < 0 ? "−" : ""}${Math.abs(r).toFixed(digits)}${unit}`;
+  };
+  // Period-over-period change. Monochrome: the sign carries the direction.
+  const change = (cur, prev) => (cur == null || prev == null || !prev ? null : signed(((cur - prev) / prev) * 100, 1, "%"));
+  const isNum = (v) => typeof v === "number" && isFinite(v);
+  const dayLong = (t) => new Date(t).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+  const when = (t, hourly) => (hourly ? `${dayLong(t)}, ${hourLabel(t)}` : dayLong(t));
+  const periodName = (r) => (r.start === r.end ? "previous day" : `previous ${Math.round((r.end - r.start) / DAY) + 1} days`);
 
   // ---------- Data access ----------
 
@@ -110,13 +126,67 @@
     return pts.some((x) => x.v != null) ? pts : null;
   }
 
+  // The All tab: one entry per date with each platform's comparable figures (see `combined` in
+  // js/platforms.js), plus anything the `all` block in js/data.js adds.
+  let allMap = null;
+  function allByDate() {
+    if (allMap) return allMap;
+    allMap = new Map();
+    const get = (date) => {
+      if (!allMap.has(date)) allMap.set(date, { date, views: {}, audience: {}, eng: {}, hours: null, l: {} });
+      return allMap.get(date);
+    };
+    for (const p of ORDER) {
+      const c = PLATFORMS[p].combined;
+      for (const d of (DATA.platforms[p] && DATA.platforms[p].days) || []) {
+        const m = d.m || {};
+        const e = get(d.date);
+        if (isNum(m[c.views])) e.views[p] = m[c.views];
+        if (isNum(m[c.audience])) e.audience[p] = m[c.audience];
+        const parts = ENGAGEMENT_KEYS.map((k) => m[k]);
+        if (parts.every(isNum)) e.eng[p] = parts.reduce((a, b) => a + b, 0);
+      }
+    }
+    for (const d of (DATA.all && DATA.all.days) || []) {
+      const e = get(d.date);
+      if (d.views) Object.assign(e.views, d.views);
+      if (d.hours) e.hours = d.hours;
+      if (d.l) Object.assign(e.l, d.l);
+    }
+    return allMap;
+  }
+  function allIn(r) {
+    const a = iso(r.start);
+    const b = iso(r.end);
+    return [...allByDate().values()].filter((d) => d.date >= a && d.date <= b).sort((x, y) => (x.date < y.date ? -1 : 1));
+  }
+  // A combined figure only exists when all three platforms report it: a total missing one isn't a total.
+  function totalOf(days, field) {
+    const per = {};
+    for (const p of ORDER) {
+      let s = 0;
+      let seen = false;
+      for (const d of days) if (isNum(d[field][p])) (s += d[field][p]), (seen = true);
+      if (!seen) return null;
+      per[p] = s;
+    }
+    return { per, total: ORDER.reduce((a, p) => a + per[p], 0) };
+  }
+  function latestAudience(days) {
+    const per = {};
+    for (const p of ORDER) {
+      for (let i = days.length - 1; i >= 0; i--) if (isNum(days[i].audience[p])) { per[p] = days[i].audience[p]; break; }
+    }
+    return per;
+  }
+
   // ---------- Icons ----------
 
   const ICONS = {
     tiktok:
-      '<svg viewBox="0 0 24 24" class="mono" fill="currentColor" aria-hidden="true"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>',
+      '<svg viewBox="0 0 24 24" class="mono" aria-hidden="true"><path fill="currentColor" d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>',
     instagram:
-      '<svg viewBox="0 0 24 24" fill="#E4405F" aria-hidden="true"><path d="M12 2.16c3.2 0 3.58.01 4.85.07 3.25.15 4.77 1.69 4.92 4.92.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.15 3.23-1.66 4.77-4.92 4.92-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-3.26-.15-4.77-1.7-4.92-4.92C2.17 15.58 2.16 15.2 2.16 12s.01-3.58.07-4.85C2.38 3.92 3.9 2.38 7.15 2.23 8.42 2.17 8.8 2.16 12 2.16zM12 0C8.74 0 8.33.01 7.05.07 2.7.27.27 2.69.07 7.05.01 8.33 0 8.74 0 12s.01 3.67.07 4.95c.2 4.36 2.62 6.78 6.98 6.98C8.33 23.99 8.74 24 12 24s3.67-.01 4.95-.07c4.35-.2 6.78-2.62 6.98-6.98.06-1.28.07-1.69.07-4.95s-.01-3.67-.07-4.95c-.2-4.35-2.62-6.78-6.98-6.98C15.67.01 15.26 0 12 0zm0 5.84a6.16 6.16 0 100 12.32 6.16 6.16 0 000-12.32zM12 16a4 4 0 110-8 4 4 0 010 8zm6.41-11.85a1.44 1.44 0 100 2.88 1.44 1.44 0 000-2.88z"/></svg>',
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#E4405F" d="M12 2.16c3.2 0 3.58.01 4.85.07 3.25.15 4.77 1.69 4.92 4.92.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.15 3.23-1.66 4.77-4.92 4.92-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-3.26-.15-4.77-1.7-4.92-4.92C2.17 15.58 2.16 15.2 2.16 12s.01-3.58.07-4.85C2.38 3.92 3.9 2.38 7.15 2.23 8.42 2.17 8.8 2.16 12 2.16zM12 0C8.74 0 8.33.01 7.05.07 2.7.27.27 2.69.07 7.05.01 8.33 0 8.74 0 12s.01 3.67.07 4.95c.2 4.36 2.62 6.78 6.98 6.98C8.33 23.99 8.74 24 12 24s3.67-.01 4.95-.07c4.35-.2 6.78-2.62 6.98-6.98.06-1.28.07-1.69.07-4.95s-.01-3.67-.07-4.95c-.2-4.35-2.62-6.78-6.98-6.98C15.67.01 15.26 0 12 0zm0 5.84a6.16 6.16 0 100 12.32 6.16 6.16 0 000-12.32zM12 16a4 4 0 110-8 4 4 0 010 8zm6.41-11.85a1.44 1.44 0 100 2.88 1.44 1.44 0 000-2.88z"/></svg>',
     youtube:
       '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF0000" d="M23.5 6.19a3.02 3.02 0 00-2.12-2.14C19.5 3.55 12 3.55 12 3.55s-7.5 0-9.38.5A3.02 3.02 0 00.5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3.02 3.02 0 002.12 2.14c1.88.5 9.38.5 9.38.5s7.5 0 9.38-.5a3.02 3.02 0 002.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.81z"/><path fill="#fff" d="M9.55 15.57V8.43L15.82 12z"/></svg>',
     video: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10.5 9.5l4 2.5-4 2.5z"/></svg>',
@@ -135,31 +205,20 @@
   };
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  ICONS.all = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
 
-  // ---------- Platform pills ----------
+  // ---------- Platform pills (shared PillTabs) ----------
 
-  const tabs = document.getElementById("platform-tabs");
+  const tabsEl = document.getElementById("platform-tabs");
   function renderTabs() {
-    tabs.innerHTML = ORDER.map((p) => {
-      const on = p === state.platform;
-      return `<button type="button" class="pill" role="tab" id="tab-${p}" aria-controls="analytics" aria-selected="${on}" tabindex="${on ? 0 : -1}" data-p="${p}">${ICONS[p]}${PLATFORMS[p].name}</button>`;
-    }).join("");
+    tabsEl.innerHTML = UI.PillTabs({
+      label: "Platform",
+      value: state.platform,
+      controls: "analytics",
+      items: TABS.map((p) => ({ value: p, id: "tab-" + p, label: NAMES[p], icon: p === "all" ? "" : ICONS[p] })),
+    });
   }
-  tabs.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-p]");
-    if (b) choosePlatform(b.dataset.p, true);
-  });
-  tabs.addEventListener("keydown", (e) => {
-    const i = ORDER.indexOf(state.platform);
-    let next = null;
-    if (e.key === "ArrowRight") next = ORDER[(i + 1) % ORDER.length];
-    else if (e.key === "ArrowLeft") next = ORDER[(i + ORDER.length - 1) % ORDER.length];
-    else if (e.key === "Home") next = ORDER[0];
-    else if (e.key === "End") next = ORDER[ORDER.length - 1];
-    if (!next) return;
-    e.preventDefault();
-    choosePlatform(next, true);
-  });
+  UI.bindPillTabs(tabsEl, (p, focus) => choosePlatform(p, focus));
   function choosePlatform(p, focus) {
     state.platform = p;
     try {
@@ -173,20 +232,61 @@
   // ---------- Analytics container ----------
 
   const root = document.getElementById("analytics");
+  root.addEventListener("change", (e) => {
+    const s = e.target.closest("select[data-select]");
+    if (!s) return;
+    state.show[s.dataset.select] = s.value;
+    renderAnalytics();
+    document.querySelector(`select[data-select="${CSS.escape(s.dataset.select)}"]`).focus();
+  });
+
+  function kpiHtml(label, text, extra) {
+    return `<div class="kpi"><dt>${esc(label)}</dt><dd>${esc(text)}${extra || ""}</dd></div>`;
+  }
+  function deltaHtml(d, r) {
+    return d ? `<span class="delta">${esc(d)}<span class="sr-only"> compared with the ${esc(periodName(r))}</span></span>` : "";
+  }
+  function pairsHtml(pairs) {
+    return pairs
+      .map((cols) => {
+        cols = cols.filter(Boolean);
+        if (!cols.length) return "";
+        return `<div class="list-pair${cols.length === 1 ? " single" : ""}">${cols.join(cols.length === 2 ? '<div class="vrule" aria-hidden="true"></div>' : "")}</div>`;
+      })
+      .join("");
+  }
+  function headHtml(link) {
+    const updated = DATA.updated ? `Updated ${fmtDay(parse(DATA.updated), true)}` : "";
+    return `<div class="a-head"><span class="updated"><span class="live-dot" aria-hidden="true"></span>${esc(updated)}</span>${link || ""}</div>`;
+  }
 
   function renderAnalytics() {
-    const p = state.platform;
+    root.setAttribute("aria-labelledby", "tab-" + state.platform);
+    const parts = state.platform === "all" ? allParts() : platformParts(state.platform);
+    const { head, kpis, chart, lists, name } = parts;
+    const anything = kpis.length || chart || lists;
+    root.innerHTML =
+      head +
+      (kpis.length ? `<dl class="kpis" style="--kpi-cols:${Math.min(kpis.length, 6)}">${kpis.join("")}</dl>` : "") +
+      (chart ? chartHtml(chart) : "") +
+      lists +
+      (anything ? "" : `<p class="empty">No ${esc(name)} figures for ${esc(fmtRange(state.range))}.</p>`);
+    if (chart) bindChart(chart);
+    const toggle = root.querySelector("#chart-mode");
+    if (toggle)
+      UI.bindPillTabs(toggle, (v, focus) => {
+        state.chartMode = v;
+        renderAnalytics();
+        if (focus) root.querySelector(`#chart-mode [data-value="${v}"]`).focus();
+      });
+  }
+
+  function platformParts(p) {
     const def = PLATFORMS[p];
     const pdata = DATA.platforms[p] || {};
     const r = state.range;
     const days = daysIn(p, r);
-    root.setAttribute("aria-labelledby", "tab-" + p);
-
-    const updated = DATA.updated ? `Updated ${fmtDay(parse(DATA.updated), true)}` : "";
-    const head = `<div class="a-head">
-      <span class="updated"><span class="live-dot" aria-hidden="true"></span>${esc(updated)}</span>
-      ${pdata.url ? `<a href="${esc(pdata.url)}" target="_blank" rel="noopener noreferrer">${esc(pdata.handle || def.name)} on ${def.name}${ICONS.external}</a>` : ""}
-    </div>`;
+    const link = pdata.url ? `<a href="${esc(pdata.url)}" target="_blank" rel="noopener noreferrer">${esc(pdata.handle || def.name)} on ${def.name}${ICONS.external}</a>` : "";
 
     // KPIs: only the ones with data. A snapshot figure (e.g. "7k+") is a total, not tied to the range.
     const kpis = def.kpis
@@ -201,68 +301,135 @@
           }
         }
         const text = format(v, k.format);
-        return text == null ? "" : `<div class="kpi"><dt>${esc(k.label)}</dt><dd>${esc(text)}${note ? `<span class="note">${esc(note)}</span>` : ""}</dd></div>`;
+        return text == null ? "" : kpiHtml(k.label, text, note ? `<span class="note">${esc(note)}</span>` : "");
       })
       .filter(Boolean);
 
-    const chart = renderChart(p, def, r);
-    const lists = def.lists
-      .map((pair) => {
-        const cols = pair.map((l) => renderList(p, l, days)).filter(Boolean);
-        if (!cols.length) return "";
-        return `<div class="list-pair${cols.length === 1 ? " single" : ""}">${cols.join(cols.length === 2 ? '<div class="vrule" aria-hidden="true"></div>' : "")}</div>`;
-      })
-      .filter(Boolean);
-
-    const anything = kpis.length || chart || lists.length;
-    root.innerHTML =
-      head +
-      (kpis.length ? `<dl class="kpis" style="--kpi-cols:${Math.min(kpis.length, 6)}">${kpis.join("")}</dl>` : "") +
-      (chart || "") +
-      lists.join("") +
-      (anything ? "" : `<p class="empty">No ${def.name} figures for ${esc(fmtRange(r))}.</p>`);
-
-    if (chart) bindChart(p, def, r);
-    root.querySelectorAll("select[data-list]").forEach((s) =>
-      s.addEventListener("change", () => {
-        state.show[s.dataset.list] = s.value;
-        renderAnalytics();
-        root.querySelector(`select[data-list="${s.dataset.list}"]`).focus();
-      })
+    const lists = pairsHtml(
+      def.lists.map((pair) =>
+        pair.map((l) => {
+          const rows = sumList(days, l.key);
+          return rows && listHtml({ id: `${p}.${l.key}`, title: l.title, unit: l.unit, share: l.share, rows: rows.map(([label, value]) => ({ label, value, icon: icon(l.icon, label) })) });
+        })
+      )
     );
+    return { name: def.name, head: headHtml(link), kpis, chart: singleChart(p, def, r), lists };
   }
+
+  function allParts() {
+    const r = state.range;
+    const pr = previousRange(r);
+    const days = allIn(r);
+    const prevDays = allIn(pr);
+    const kpis = [];
+
+    // Followers and subscribers are added only under a label that says so.
+    const aud = latestAudience(days);
+    const audPrev = latestAudience(prevDays);
+    const sum = (o) => (ORDER.every((p) => isNum(o[p])) ? ORDER.reduce((a, p) => a + o[p], 0) : null);
+    const audTotal = sum(aud);
+    if (audTotal != null) kpis.push(kpiHtml("Followers + subscribers", format(audTotal), deltaHtml(change(audTotal, sum(audPrev)), r)));
+
+    const views = totalOf(days, "views");
+    const viewsPrev = totalOf(prevDays, "views");
+    if (views) kpis.push(kpiHtml("Views", format(views.total), deltaHtml(change(views.total, viewsPrev && viewsPrev.total), r)));
+
+    const eng = totalOf(days, "eng");
+    const engPrev = totalOf(prevDays, "eng");
+    if (eng) kpis.push(kpiHtml("Engagements", format(eng.total), deltaHtml(change(eng.total, engPrev && engPrev.total), r)));
+
+    // Engagements ÷ views across all three, so each platform counts by its size. Change in points.
+    if (eng && views && views.total) {
+      const rate = (eng.total / views.total) * 100;
+      const prevRate = engPrev && viewsPrev && viewsPrev.total ? (engPrev.total / viewsPrev.total) * 100 : null;
+      kpis.push(kpiHtml("Engagement rate", format(rate, "percent"), deltaHtml(prevRate == null ? null : signed(rate - prevRate, 1, " pts"), r)));
+    }
+
+    // Lists
+    const audRows = ORDER.map((p) => {
+      const c = PLATFORMS[p].combined;
+      const label = `${NAMES[p]} ${c.audienceLabel}`;
+      if (isNum(aud[p])) return { label, value: aud[p], icon: platformIcon(p) };
+      // Only a snapshot like "7k+": shown as written, the bar uses the number it starts from.
+      const snap = DATA.platforms[p] && DATA.platforms[p].snapshot && DATA.platforms[p].snapshot[c.audience];
+      const n = typeof snap === "string" ? parseSnap(snap) : null;
+      return n ? { label, value: n, display: snap, icon: platformIcon(p) } : null;
+    });
+    const followersList = audRows.every(Boolean)
+      ? listHtml({ id: "all.audience", title: "Followers by platform", unit: "Followers", rows: audRows.sort((a, b) => b.value - a.value), snapshot: audRows.some((x) => x.display) })
+      : "";
+    const viewsList = views
+      ? listHtml({
+          id: "all.views",
+          title: "Views by platform",
+          unit: "Views",
+          rows: ORDER.map((p) => ({ label: `${NAMES[p]} ${PLATFORMS[p].combined.viewsLabel}`, value: views.per[p], icon: platformIcon(p) })).sort((a, b) => b.value - a.value),
+        })
+      : "";
+    const countries = sumList(days, "countries");
+    const countriesList = countries
+      ? listHtml({ id: "all.countries", title: "Top countries", unit: "Views", rows: countries.map(([label, value]) => ({ label, value, icon: icon("country", label) })) })
+      : "";
+    const delivs = (DATA.deliverables || []).filter((d) => isNum(d.views)).sort((a, b) => b.views - a.views);
+    const delivList = delivs.length
+      ? listHtml({
+          id: "all.deliverables",
+          title: "Top deliverables",
+          unit: "All-time views",
+          rows: delivs.map((d) => ({ label: d.title ? `${d.brand} · ${d.title}` : d.brand, value: d.views, icon: d.platform ? platformIcon(d.platform) : icon("video") })),
+        })
+      : "";
+
+    return {
+      name: "combined",
+      head: headHtml(""),
+      kpis,
+      chart: state.chartMode === "indexed" && r.start !== r.end ? indexedChart(r) : stackedChart(r),
+      lists: pairsHtml([[followersList, viewsList], [countriesList, delivList]]),
+    };
+  }
+
+  const parseSnap = (s) => {
+    const m = /^([\d.,]+)\s*([kKmM]?)/.exec(s);
+    if (!m) return null;
+    const n = parseFloat(m[1].replace(/,/g, ""));
+    return n * ({ k: 1e3, m: 1e6 }[m[2].toLowerCase()] || 1);
+  };
 
   // ---------- Lists with proportional bars ----------
 
   const MAX_ROWS = 7;
 
-  function renderList(p, l, days) {
-    const rows = sumList(days, l.key);
+  function listHtml({ id, title, unit, share, rows, snapshot }) {
     if (!rows || !rows.length) return "";
-    const id = `${p}.${l.key}`;
-    const mode = state.show[id] || (l.share ? "share" : "count");
-    const total = rows.reduce((a, [, v]) => a + v, 0);
-    const top = rows[0][1] || 1;
-    const shown = rows.slice(0, MAX_ROWS);
-    const items = shown
-      .map(([label, v], i) => {
-        const pct = (v / top) * 100;
-        const value = mode === "share" ? `${((v / total) * 100).toFixed(1)}%` : compact(v);
+    const mode = state.show[id] || (share ? "share" : "count");
+    const total = rows.reduce((a, x) => a + x.value, 0);
+    const top = rows[0].value || 1;
+    const items = rows
+      .slice(0, MAX_ROWS)
+      .map((row, i) => {
+        const pct = (row.value / top) * 100;
+        const value = mode === "share" && !snapshot ? `${((row.value / total) * 100).toFixed(1)}%` : row.display || exact(row.value);
         const fade = i === MAX_ROWS - 1 && rows.length >= MAX_ROWS;
-        return `<li class="row${fade ? " fade" : ""}" data-value="${v}">
+        return `<li class="row${fade ? " fade" : ""}" data-value="${row.value}">
           <div class="track"><span class="bar" style="width:${pct.toFixed(2)}%"></span>
-            <span class="label">${icon(l.icon, label)}<span>${esc(label)}</span></span></div>
-          <span class="value">${value}</span></li>`;
+            <span class="label">${row.icon}<span>${esc(row.label)}</span></span></div>
+          <span class="value">${esc(value)}</span></li>`;
       })
       .join("");
-    return `<div class="list">
-      <div class="list-head"><h3>${esc(l.title)}</h3>
-        <label class="select"><span class="sr-only">Show ${esc(l.title.toLowerCase())} as</span>
-          <select data-list="${id}">
-            <option value="count"${mode === "count" ? " selected" : ""}>${esc(l.unit)}</option>
-            <option value="share"${mode === "share" ? " selected" : ""}>Share</option>
-          </select>${ICONS.chevron}</label></div>
-      <ul class="rows">${items}</ul></div>`;
+    // A list of "7k+" style figures has no exact total to share out, so it gets no dropdown.
+    const control = snapshot
+      ? `<span class="list-note">As of ${esc(fmtDay(parse(DATA.updated), true))}</span>`
+      : UI.Select({
+          id: `list:${id}`,
+          label: `Show ${title.toLowerCase()} as`,
+          value: mode,
+          options: [
+            { value: "count", label: unit },
+            { value: "share", label: "Share" },
+          ],
+        });
+    return `<div class="list"><div class="list-head"><h3>${esc(title)}</h3>${control}</div><ul class="rows">${items}</ul></div>`;
   }
 
   function icon(kind, label) {
@@ -272,120 +439,369 @@
     }
     return `<span class="ico" aria-hidden="true">${ICONS[kind] || ICONS.source}</span>`;
   }
+  const platformIcon = (p) => `<span class="ico brand" aria-hidden="true">${ICONS[p]}</span>`;
 
-  // ---------- Chart ----------
+  // ---------- Chart models ----------
+  // Every chart is a model: points in time (ts), a y maximum, and series to draw. The same renderer,
+  // crosshair and tooltip serve all three kinds: "single", "stacked" and "indexed".
+
+  const COLORS = { tiktok: "var(--tiktok)", instagram: "var(--instagram)", youtube: "var(--youtube)" };
+
+  function singleChart(p, def, r) {
+    const cur = series(p, r, def.chart.key);
+    if (!cur) return null;
+    const prev = series(p, previousRange(r), def.chart.key);
+    const vals = cur.concat(prev || []).map((x) => x.v).filter((v) => v != null);
+    const label = def.chart.label;
+    return {
+      kind: "single",
+      ts: cur.map((x) => x.t),
+      prevTs: prev ? prev.map((x) => x.t) : null,
+      hourly: !!cur[0].hourly,
+      max: niceMax(Math.max(...vals, 1)),
+      cur: cur.map((x) => x.v),
+      prev: prev ? prev.map((x) => x.v) : null,
+      label,
+      prevLabel: periodName(r).replace(/^p/, "P"),
+      aria: `${label}, ${fmtRange(r)}: total ${exact(cur.reduce((a, b) => a + (b.v || 0), 0))}.`,
+    };
+  }
+
+  // Views per platform for every point in the range: hourly for a single day, daily otherwise.
+  // Null when any platform has nothing, because a stack missing a platform would misstate the total.
+  function viewsGrid(r) {
+    const days = allIn(r);
+    if (r.start === r.end) {
+      const d = days[0];
+      if (!d || !d.hours || !ORDER.every((p) => Array.isArray(d.hours[p]))) return null;
+      return { hourly: true, ts: d.hours.tiktok.map((_, i) => r.start + i * 3600e3), by: Object.fromEntries(ORDER.map((p) => [p, d.hours[p].slice()])) };
+    }
+    const byDate = new Map(days.map((d) => [d.date, d]));
+    const ts = [];
+    const by = { tiktok: [], instagram: [], youtube: [] };
+    for (let t = r.start; t <= r.end; t += DAY) {
+      ts.push(t);
+      const d = byDate.get(iso(t));
+      for (const p of ORDER) by[p].push(d && isNum(d.views[p]) ? d.views[p] : null);
+    }
+    if (!ORDER.every((p) => by[p].some((v) => v != null))) return null;
+    return { hourly: false, ts, by };
+  }
+
+  function stackedChart(r) {
+    const g = viewsGrid(r);
+    if (!g) return null;
+    const pr = previousRange(r);
+    const pg = viewsGrid(pr);
+    const n = g.ts.length;
+    const totalAt = (grid, i) => (ORDER.some((p) => grid.by[p][i] != null) ? ORDER.reduce((a, p) => a + (grid.by[p][i] || 0), 0) : null);
+    const totals = g.ts.map((_, i) => totalAt(g, i));
+    const prevTotals = pg ? pg.ts.map((_, i) => totalAt(pg, i)) : null;
+    const max = niceMax(Math.max(1, ...totals.filter(isNum), ...(prevTotals || []).filter(isNum)));
+    const sum = totals.reduce((a, b) => a + (b || 0), 0);
+    return {
+      kind: "stacked",
+      ts: g.ts,
+      prevTs: pg ? pg.ts : null,
+      hourly: g.hourly,
+      max,
+      bands: ORDER.map((p) => ({ p, name: NAMES[p], values: g.by[p] })), // bottom to top
+      totals,
+      prev: prevTotals,
+      prevLabel: `${periodName(r).replace(/^p/, "P")}, total`,
+      toggle: !g.hourly,
+      n,
+      aria: `Views on all three platforms, stacked, ${fmtRange(r)}: total ${exact(sum)}. ${ORDER.map((p) => `${NAMES[p]} ${exact(g.by[p].reduce((a, b) => a + (b || 0), 0))}`).join(", ")}.`,
+    };
+  }
+
+  // Each platform's views as a 7-day average, rebased to 100 on the first day of the range, so growth
+  // can be compared regardless of size. The average stops a single big day setting the baseline.
+  function indexedChart(r) {
+    const g = viewsGrid({ start: r.start - 6 * DAY, end: r.end });
+    if (!g) return null;
+    const lines = [];
+    for (const p of ORDER) {
+      const raw = g.by[p];
+      const avg = raw.map((_, i) => {
+        if (i < 6) return null;
+        const win = raw.slice(i - 6, i + 1).filter(isNum);
+        return win.length ? win.reduce((a, b) => a + b, 0) / win.length : null;
+      });
+      const inRange = avg.slice(6);
+      const base = inRange.find((v) => v);
+      if (!base) continue;
+      lines.push({ p, name: NAMES[p], values: inRange.map((v) => (v == null ? null : (v / base) * 100)) });
+    }
+    if (lines.length !== ORDER.length) return null;
+    const vals = lines.flatMap((l) => l.values).filter(isNum);
+    return {
+      kind: "indexed",
+      ts: g.ts.slice(6),
+      hourly: false,
+      max: niceMax(Math.max(...vals, 100)),
+      lines,
+      baseT: r.start,
+      toggle: true,
+      aria: `Views growth by platform, ${fmtRange(r)}, 7-day average indexed to 100 on ${fmtDay(r.start, true)}. ${lines
+        .map((l) => `${l.name} ends at ${l.values[l.values.length - 1].toFixed(0)}`)
+        .join(", ")}.`,
+    };
+  }
+
+  // ---------- Chart rendering ----------
 
   const W = 1000;
   const H = 300;
 
-  function renderChart(p, def, r) {
-    const cur = series(p, r, def.chart.key);
-    if (!cur) return "";
-    const prevR = previousRange(r);
-    const prev = series(p, prevR, def.chart.key);
-    const vals = cur.concat(prev || []).map((x) => x.v).filter((v) => v != null);
-    const max = niceMax(Math.max(...vals, 1));
-    const n = cur.length;
+  function chartHtml(m) {
+    const n = m.ts.length;
     const x = (i) => (n === 1 ? W / 2 : (i / (n - 1)) * W);
-    const y = (v) => H - (v / max) * H;
-    const line = (pts) => {
+    const y = (v) => H - (v / m.max) * H;
+    const path = (vals) => {
       let d = "";
       let pen = false;
-      pts.forEach((pt, i) => {
-        if (i >= n || pt.v == null) return (pen = false);
-        d += `${pen ? "L" : "M"}${x(i).toFixed(1)} ${y(pt.v).toFixed(1)} `;
+      vals.forEach((v, i) => {
+        if (i >= n || v == null) return (pen = false);
+        d += `${pen ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)} `;
         pen = true;
       });
       return d;
     };
-    const curD = line(cur);
-    const first = cur.findIndex((pt) => pt.v != null);
-    let last = n - 1;
-    while (cur[last].v == null) last--;
-    const area = `${curD}L${x(last)} ${H} L${x(first)} ${H} Z`;
-    const hourly = cur[0].hourly;
-    const prevLabel = r.start === r.end ? "Previous day" : `Previous ${Math.round((r.end - r.start) / DAY) + 1} days`;
+    const dotted = (vals) => `<path class="s-previous" vector-effect="non-scaling-stroke" d="${path(vals)}"/>`;
 
-    // X axis: both ends plus a couple of points between
+    let body = "";
+    let legend = "";
+    if (m.kind === "single") {
+      const d = path(m.cur);
+      const first = m.cur.findIndex((v) => v != null);
+      let last = n - 1;
+      while (m.cur[last] == null) last--;
+      body = `<defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.06"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
+        <path d="${d}L${x(last)} ${H} L${x(first)} ${H} Z" fill="url(#fill)"/>
+        ${m.prev ? dotted(m.prev) : ""}<path class="s-current" vector-effect="non-scaling-stroke" d="${d}"/>`;
+      legend = `<span><i class="line"></i>${esc(m.label)}</span>${m.prev ? `<span><i class="line dotted"></i>${esc(m.prevLabel)}</span>` : ""}`;
+    } else if (m.kind === "stacked") {
+      // Cumulative edges: band k fills between edge k and edge k+1
+      const edges = [m.ts.map(() => 0)];
+      m.bands.forEach((b, k) => edges.push(edges[k].map((v, i) => v + (b.values[i] || 0))));
+      m.bands.forEach((b, k) => {
+        const up = edges[k + 1].map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`);
+        const down = edges[k].map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).reverse();
+        body += `<path class="band" style="--c:${COLORS[b.p]}" d="M${up.join(" L")} L${down.join(" L")} Z"/>`;
+      });
+      m.bands.forEach((b, k) => (body += `<path class="band-edge" style="--c:${COLORS[b.p]}" vector-effect="non-scaling-stroke" d="${path(edges[k + 1])}"/>`));
+      if (m.prev) body += dotted(m.prev);
+      legend =
+        m.bands
+          .slice()
+          .reverse()
+          .map((b) => `<span><i class="swatch" style="--c:${COLORS[b.p]}"></i>${esc(b.name)}</span>`)
+          .join("") + (m.prev ? `<span><i class="line dotted"></i>${esc(m.prevLabel)}</span>` : "");
+    } else {
+      m.lines.forEach((l) => (body += `<path class="s-index" style="--c:${COLORS[l.p]}" vector-effect="non-scaling-stroke" d="${path(l.values)}"/>`));
+      legend =
+        m.lines.map((l) => `<span><i class="line" style="--c:${COLORS[l.p]}"></i>${esc(l.name)}</span>`).join("") +
+        `<span>7-day average views, ${esc(fmtDay(m.baseT))} = 100</span>`;
+    }
+
     const ticks = [0, Math.round((n - 1) / 3), Math.round(((n - 1) * 2) / 3), n - 1].filter((v, i, a) => a.indexOf(v) === i);
     const axis = ticks
-      .map((i) => `<span style="left:${n === 1 ? 50 : (i / (n - 1)) * 100}%">${esc(hourly ? hourLabel(cur[i].t) : fmtDay(cur[i].t))}</span>`)
+      .map((i) => `<span style="left:${n === 1 ? 50 : (i / (n - 1)) * 100}%">${esc(m.hourly ? hourLabel(m.ts[i]) : fmtDay(m.ts[i]))}</span>`)
       .join("");
-
-    state.chart = { cur, prev, max, n, hourly, label: def.chart.label, prevLabel };
+    const toggle = m.toggle
+      ? UI.PillTabs({
+          id: "chart-mode",
+          label: "Chart",
+          value: m.kind,
+          items: [
+            { value: "stacked", label: "Stacked" },
+            { value: "indexed", label: "Indexed" },
+          ],
+        })
+      : "";
 
     return `<figure class="chart" style="margin:0">
-      <span class="chart-max" aria-hidden="true">${compact(max)}</span>
-      <div class="plot" tabindex="0" role="img" aria-label="${esc(
-        `${def.chart.label}, ${fmtRange(r)}: total ${compact(vals.length ? cur.reduce((a, b) => a + (b.v || 0), 0) : 0)}, highest ${compact(Math.max(...cur.map((c) => c.v || 0)))}. Dotted line: ${prevLabel.toLowerCase()}. Use the arrow keys to read each point.`
-      )}">
-        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
-          <defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0" stop-color="#fff" stop-opacity="0.06"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
-          <path d="${area}" fill="url(#fill)"/>
-          ${prev ? `<path class="s-previous" vector-effect="non-scaling-stroke" d="${line(prev)}"/>` : ""}
-          <path class="s-current" vector-effect="non-scaling-stroke" d="${curD}"/>
-          <line class="s-rule" id="rule" x1="0" x2="0" y1="0" y2="${H}" vector-effect="non-scaling-stroke" visibility="hidden"/>
+      <div class="chart-head"><span class="chart-max" aria-hidden="true">${m.kind === "indexed" ? exact(m.max) : compact(m.max)}</span>${toggle}</div>
+      <div class="plot" tabindex="0" role="img" aria-label="${esc(m.aria + " Use the arrow keys to read each point.")}">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${body}
+          <line class="s-rule" x1="0" x2="0" y1="0" y2="${H}" vector-effect="non-scaling-stroke" visibility="hidden"/>
         </svg>
       </div>
       <div class="axis" aria-hidden="true">${axis}</div>
-      <figcaption class="chart-legend"><span><i></i>${esc(def.chart.label)}</span>${prev ? `<span><i class="dotted"></i>${esc(prevLabel)}</span>` : ""}</figcaption>
+      <figcaption class="chart-legend">${legend}</figcaption>
     </figure>`;
   }
 
-  function bindChart() {
-    const plot = root.querySelector(".plot");
-    const rule = root.querySelector("#rule");
-    const c = state.chart;
+  // ---------- Tooltip ----------
+  // One component for every chart. A row is { marker: "dot" | "ring" | null, color, label, value, extra }.
+
+  function Tooltip({ heading, compare, total, rows }) {
+    const row = (r, cls) =>
+      `<div class="tip-row${cls ? " " + cls : ""}"><span class="marker${r.marker ? " m-" + r.marker : ""}"${r.color ? ` style="--c:${r.color}"` : ""}></span><dt>${esc(r.label)}</dt><dd>${esc(
+        r.value
+      )}</dd><dd class="extra">${esc(r.extra || "")}</dd></div>`;
+    return `<p class="tip-heading">${esc(heading)}</p>${compare ? `<p class="tip-compare">${esc(compare)}</p>` : ""}<dl>${total ? row(total, "total") + '<hr class="tip-rule" />' : ""}${rows
+      .map((r) => row(r))
+      .join("")}</dl>`;
+  }
+
+  // Whole-number shares that add up to exactly 100 (largest remainder).
+  function shares(values) {
+    const sum = values.reduce((a, b) => a + b, 0);
+    if (!sum) return values.map(() => 0);
+    const raw = values.map((v) => (v / sum) * 100);
+    const out = raw.map(Math.floor);
+    let left = 100 - out.reduce((a, b) => a + b, 0);
+    raw
+      .map((v, i) => [v - Math.floor(v), i])
+      .sort((a, b) => b[0] - a[0])
+      .forEach(([, i]) => left-- > 0 && out[i]++);
+    return out;
+  }
+
+  function tooltipFor(m, i) {
+    const t = m.ts[i];
+    const pt = m.prevTs && m.prevTs[i];
+    const compare = pt != null ? `vs ${when(pt, m.hourly)}` : null;
+    if (m.kind === "single") {
+      const v = m.cur[i];
+      const pv = m.prev && m.prev[i];
+      return Tooltip({
+        heading: when(t, m.hourly),
+        compare,
+        rows: [
+          { marker: "dot", color: "var(--stroke)", label: m.label, value: v == null ? "No data" : exact(v) },
+          ...(m.prev ? [{ marker: "ring", color: "var(--stroke)", label: "Previous period", value: pv == null ? "No data" : exact(pv), extra: change(v, pv) || "" }] : []),
+        ],
+      });
+    }
+    if (m.kind === "stacked") {
+      const vals = m.bands.map((b) => b.values[i] || 0);
+      const pct = shares(vals);
+      const rows = m.bands
+        .map((b, k) => ({ marker: "dot", color: COLORS[b.p], label: b.name, value: exact(vals[k]), extra: `${pct[k]}%`, v: vals[k] }))
+        .sort((a, b) => b.v - a.v);
+      const tot = m.totals[i];
+      const pv = m.prev && m.prev[i];
+      return Tooltip({ heading: when(t, m.hourly), compare, total: { label: "Total", value: tot == null ? "No data" : exact(tot), extra: change(tot, pv) || "" }, rows });
+    }
+    const rows = m.lines
+      .map((l) => ({ marker: "dot", color: COLORS[l.p], label: l.name, value: l.values[i] == null ? "No data" : l.values[i].toFixed(1), v: l.values[i] || 0 }))
+      .sort((a, b) => b.v - a.v);
+    return Tooltip({ heading: dayLong(t), compare: `vs ${dayLong(m.baseT)} = 100`, rows });
+  }
+
+  // Points to mark at index i, as { v, color, ring }
+  function marksFor(m, i) {
+    if (m.kind === "single") return [{ v: m.cur[i], color: "var(--stroke)" }, ...(m.prev ? [{ v: m.prev[i], color: "var(--stroke)", ring: true }] : [])];
+    if (m.kind === "stacked") {
+      let acc = 0;
+      const out = m.bands.map((b) => ({ v: (acc += b.values[i] || 0), color: COLORS[b.p] }));
+      if (m.prev) out.push({ v: m.prev[i], color: "var(--stroke)", ring: true });
+      return out;
+    }
+    return m.lines.map((l) => ({ v: l.values[i], color: COLORS[l.p] }));
+  }
+
+  // A tap anywhere else puts a touch tooltip away. One listener, pointed at the chart on screen.
+  let outsideTap = null;
+  document.addEventListener("pointerdown", (e) => outsideTap && outsideTap(e), { capture: true });
+
+  function bindChart(m) {
+    const fig = root.querySelector(".chart");
+    const plot = fig.querySelector(".plot");
+    const rule = plot.querySelector(".s-rule");
+    const n = m.ts.length;
+    const tip = document.createElement("div");
+    tip.className = "tip";
+    tip.hidden = true;
+    fig.appendChild(tip);
+    let marks = [];
     let active = null;
-    let nodes = [];
+    let touch = false;
+    let dragging = false;
 
     function clear() {
-      nodes.forEach((el) => el.remove());
-      nodes = [];
+      marks.forEach((el) => el.remove());
+      marks = [];
       rule.setAttribute("visibility", "hidden");
+      tip.hidden = true;
       active = null;
     }
     function show(i) {
-      clear();
+      if (i === active && !tip.hidden) return position(i);
+      marks.forEach((el) => el.remove());
+      marks = [];
       active = i;
-      const left = c.n === 1 ? 50 : (i / (c.n - 1)) * 100;
+      const left = n === 1 ? 50 : (i / (n - 1)) * 100;
       rule.setAttribute("x1", (left / 100) * W);
       rule.setAttribute("x2", (left / 100) * W);
       rule.setAttribute("visibility", "visible");
-      const pts = [c.cur[i], c.prev && c.prev[i]];
-      pts.forEach((pt) => {
-        if (!pt || pt.v == null) return;
+      for (const mk of marksFor(m, i)) {
+        if (mk.v == null) continue;
         const d = document.createElement("span");
-        d.className = "dot";
+        d.className = mk.ring ? "dot ring" : "dot";
+        d.style.setProperty("--c", mk.color);
         d.style.left = left + "%";
-        d.style.top = (1 - pt.v / c.max) * 100 + "%";
+        d.style.top = (1 - mk.v / m.max) * 100 + "%";
         plot.appendChild(d);
-        nodes.push(d);
-      });
-      const t = c.cur[i].t;
-      const when = c.hourly ? `${fmtDay(t, true)} · ${hourLabel(t)}` : new Date(t).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
-      const tip = document.createElement("div");
-      tip.className = "tip";
-      const row = (cls, label, pt) =>
-        `<div><span class="marker${cls}"></span><dt>${esc(label)}</dt><dd>${pt && pt.v != null ? pt.v.toLocaleString("en-GB") : "–"}</dd></div>`;
-      tip.innerHTML = `<h3>${esc(when)}</h3><dl>${row("", c.label, c.cur[i])}${c.prev ? row(" dotted", c.prevLabel, c.prev[i]) : ""}</dl>`;
-      if (left > 55) tip.style.right = `calc(${100 - left}% + 12px)`;
-      else tip.style.left = `calc(${left}% + 12px)`;
-      plot.appendChild(tip);
-      nodes.push(tip);
+        marks.push(d);
+      }
+      tip.innerHTML = tooltipFor(m, i);
+      tip.hidden = false;
+      position(i);
     }
-    function pick(e) {
+    // Tracks x; never moves vertically. Mouse: beside the crosshair, flipping left near the right edge.
+    // Touch: pinned above the chart, so the finger never covers it.
+    function position(i) {
+      const fr = fig.getBoundingClientRect();
+      const pr = plot.getBoundingClientRect();
+      const xPx = pr.left - fr.left + (n === 1 ? 0.5 : i / (n - 1)) * pr.width;
+      const w = tip.offsetWidth;
+      let left;
+      if (touch) {
+        left = Math.min(Math.max(xPx - w / 2, 0), fr.width - w);
+        tip.style.top = "auto";
+        tip.style.bottom = `calc(100% + 8px)`;
+      } else {
+        left = xPx + 14 + w > fr.width ? xPx - 14 - w : xPx + 14;
+        left = Math.max(0, left);
+        tip.style.bottom = "auto";
+        tip.style.top = `${pr.top - fr.top + 4}px`;
+      }
+      tip.classList.toggle("flipped", !touch && left < xPx);
+      tip.classList.toggle("pinned", touch);
+      tip.style.left = `${left}px`;
+    }
+    const indexAt = (clientX) => {
       const r = plot.getBoundingClientRect();
-      show(Math.min(c.n - 1, Math.max(0, Math.round(((e.clientX - r.left) / r.width) * (c.n - 1)))));
-    }
-    plot.addEventListener("pointermove", pick);
-    plot.addEventListener("pointerdown", pick);
-    plot.addEventListener("pointerleave", clear);
+      return Math.min(n - 1, Math.max(0, Math.round(((clientX - r.left) / r.width) * (n - 1))));
+    };
+    plot.addEventListener("pointerdown", (e) => {
+      touch = e.pointerType !== "mouse";
+      if (touch) dragging = true;
+      show(indexAt(e.clientX));
+    });
+    plot.addEventListener("pointermove", (e) => {
+      if (e.pointerType === "mouse") {
+        touch = false;
+        show(indexAt(e.clientX));
+      } else if (dragging) show(indexAt(e.clientX));
+    });
+    plot.addEventListener("pointerup", () => (dragging = false));
+    plot.addEventListener("pointercancel", () => (dragging = false));
+    plot.addEventListener("pointerleave", (e) => {
+      if (e.pointerType === "mouse") clear();
+    });
+    outsideTap = (e) => {
+      if (touch && !plot.contains(e.target)) clear();
+    };
     plot.addEventListener("blur", clear);
     plot.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight") show(Math.min(c.n - 1, active == null ? 0 : active + 1));
-      else if (e.key === "ArrowLeft") show(Math.max(0, active == null ? c.n - 1 : active - 1));
+      touch = false;
+      if (e.key === "ArrowRight") show(Math.min(n - 1, active == null ? 0 : active + 1));
+      else if (e.key === "ArrowLeft") show(Math.max(0, active == null ? n - 1 : active - 1));
       else if (e.key === "Escape") clear();
       else return;
       e.preventDefault();
@@ -401,6 +817,7 @@
     for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (v <= m * step) return m * step;
     return 10 * step;
   }
+
 
   // ---------- Date picker ----------
 
@@ -622,7 +1039,7 @@
   if (DATA.sample) document.getElementById("sample-banner").hidden = false;
   window.addEventListener("hashchange", () => {
     const h = location.hash.slice(1);
-    if (ORDER.includes(h) && h !== state.platform) choosePlatform(h, false);
+    if (TABS.includes(h) && h !== state.platform) choosePlatform(h, false);
   });
   renderTabs();
   updateChip();

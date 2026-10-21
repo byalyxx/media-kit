@@ -18,8 +18,13 @@ Everything lives in `js/data.js`.
 
 The metric and list keys each platform understands are in `js/platforms.js`. Anything you leave out simply doesn't show: no zeros, no empty boxes.
 
-- `deliverables`: put your best three first. Each one is `{ brand, title, platform, url, thumb, alt }`, with `thumb` a 9:16 image in `assets/deliverables/` and `alt` describing what the frame shows. The section stays hidden until there's at least one.
+- `all`: the All tab works out each platform's views, followers and engagements from the platform days, using the metrics listed under `combined` in `js/platforms.js` (TikTok video views, Instagram plays, YouTube views; likes + comments + shares everywhere). `all.days` only holds what the platforms can't give on their own: views by country across all three (`l.countries`), views per hour for single-day ranges (`hours`), or a per-platform `views` figure that overrides the worked-out one. A combined figure only appears when all three platforms have it.
+- `deliverables`: put your best three first. Each one is `{ brand, title, platform, url, thumb, alt, views }`, with `thumb` a 9:16 image in `assets/deliverables/` and `alt` describing what the frame shows. The section stays hidden until there's at least one.
 - `partners`: `{ name, logo, url }`.
+
+## Controls shared with the main site
+
+`ui.css` and `js/ui.js` are ports of the main site's control components (byalyxx/site-): `buttonClass`, the SiteNav pill group and its `itemClass`, and the ContactForm submit button, resolved to the same values. Change them on the main site first, then port the change here. The text tabs (`PillTabs`) and the dropdown (`Select`) have no equivalent there yet, so they're built from the main site's tokens.
 
 ## Previewing
 

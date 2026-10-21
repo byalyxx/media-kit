@@ -1,6 +1,9 @@
 // What each platform reports, in its own terms. Metrics are not shared between platforms:
 // a KPI or list only appears when the data for it exists.
 //
+// `combined` names the metrics that measure the same thing on every platform, for the All tab.
+// Engagements are likes + comments + shares on all three (saves are left out: YouTube has none).
+//
 // KPI `value(days, snapshot)` returns a number (formatted with `format`) or a ready string, or null to hide it.
 
 (function () {
@@ -33,10 +36,13 @@
     return (a.reduce((x, y) => x + y, 0) / b) * scale;
   };
 
+  window.ENGAGEMENT_KEYS = ["likes", "comments", "shares"];
+
   window.PLATFORMS = {
     tiktok: {
       name: "TikTok",
       chart: { key: "views", label: "Video views" },
+      combined: { views: "views", viewsLabel: "video views", audience: "followers", audienceLabel: "followers" },
       kpis: [
         { label: "Followers", value: latest("followers"), format: "compact" },
         { label: "Video views", value: sum("views"), format: "compact" },
@@ -59,6 +65,8 @@
     instagram: {
       name: "Instagram",
       chart: { key: "reach", label: "Reach" },
+      // Plays, not reach: plays count views the way TikTok and YouTube do, reach counts accounts.
+      combined: { views: "plays", viewsLabel: "plays", audience: "followers", audienceLabel: "followers" },
       kpis: [
         { label: "Followers", value: latest("followers"), format: "compact" },
         { label: "Reach", value: sum("reach"), format: "compact" },
@@ -80,6 +88,7 @@
     youtube: {
       name: "YouTube",
       chart: { key: "views", label: "Views" },
+      combined: { views: "views", viewsLabel: "views", audience: "subscribers", audienceLabel: "subscribers" },
       kpis: [
         { label: "Subscribers", value: latest("subscribers"), format: "compact" },
         { label: "Views", value: sum("views"), format: "compact" },
