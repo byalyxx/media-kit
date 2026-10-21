@@ -51,7 +51,7 @@
   --muted: #8e8e8e;
   --live: #3b82f6; /* the live dot, nowhere else */
   --stroke: #a0a0a0;
-  /* Platform colours for the All tab's stacked bands and tooltip dots, and nowhere else: each brand's
+  /* Platform colours for the tooltip's breakdown dots and the Indexed lines, and nowhere else: each brand's
      hue (TikTok cyan, Instagram magenta, YouTube red), desaturated to sit quietly on the dark card. */
   --tiktok: #5aa7a8;
   --instagram: #b072a8;
@@ -271,11 +271,12 @@ svg {
 }
 
 /* Chart */
+/* The hairline above comes from the KPI row; the chart gets room to breathe on both sides */
 .chart {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-bottom: 28px;
+  gap: 12px;
+  padding-block: 12px 40px;
   border-bottom: 1px solid var(--hairline);
 }
 .chart-max,
@@ -287,13 +288,14 @@ svg {
 }
 .plot {
   position: relative;
-  height: 180px;
+  height: 200px;
+  margin-top: 4px;
   touch-action: pan-y;
   cursor: crosshair;
 }
 @media (min-width: 760px) {
   .plot {
-    height: 240px;
+    height: 260px;
   }
 }
 .plot svg {
@@ -324,11 +326,6 @@ svg {
   stroke-dasharray: 1 4;
   stroke-linecap: round;
 }
-.plot .band {
-  fill: var(--c);
-  fill-opacity: 0.45;
-}
-.plot .band-edge,
 .plot .s-index {
   fill: none;
   stroke: var(--c);
@@ -339,6 +336,26 @@ svg {
   stroke: rgba(255, 255, 255, 0.22);
   stroke-width: 1;
 }
+/* Total / Indexed: quiet text controls in the chart's top right */
+.text-tabs {
+  display: flex;
+  gap: 14px;
+}
+.text-tab {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--duration) var(--ease);
+}
+.text-tab:hover,
+.text-tab[aria-selected="true"] {
+  color: var(--fg);
+}
+
 /* Markers on the series: filled for solid lines, a ring for the dotted comparison */
 .dot {
   position: absolute;
@@ -465,12 +482,6 @@ svg {
 }
 .chart-legend .line.dotted {
   border-top-style: dotted;
-}
-.chart-legend .swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  background: var(--c);
 }
 
 /* Lists: two columns split by a vertical hairline, stacked on phones */

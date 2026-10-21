@@ -18,7 +18,7 @@ Everything lives in `js/data.js`.
 
 The metric and list keys each platform understands are in `js/platforms.js`. Anything you leave out simply doesn't show: no zeros, no empty boxes.
 
-- `all`: the All tab works out each platform's views, followers and engagements from the platform days, using the metrics listed under `combined` in `js/platforms.js` (TikTok video views, Instagram plays, YouTube views; likes + comments + shares everywhere). `all.days` only holds what the platforms can't give on their own: views by country across all three (`l.countries`), views per hour for single-day ranges (`hours`), or a per-platform `views` figure that overrides the worked-out one. A combined figure only appears when all three platforms have it.
+- `all`: the All tab works out each platform's views, followers and engagements from the platform days, using the metrics listed under `combined` in `js/platforms.js` (TikTok video views, Instagram plays, YouTube views; likes + comments + shares everywhere). `all.days` only holds what the platforms can't give on their own: views by country across all three (`l.countries`), views per hour for single-day ranges (`hours`), or a per-platform `views` figure that overrides the worked-out one. A combined figure only appears when all three platforms have it. The All chart groups points by range length: hourly up to 2 days, daily up to 31, weekly (Monday start) up to 120, monthly beyond.
 - `deliverables`: put your best three first. Each one is `{ brand, title, platform, url, thumb, alt, views }`, with `thumb` a 9:16 image in `assets/deliverables/` and `alt` describing what the frame shows. The section stays hidden until there's at least one.
 - `partners`: `{ name, logo, url }`.
 

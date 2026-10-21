@@ -22,8 +22,19 @@
       .join("")}</div>`;
   }
 
+  // Built here, not on the main site: quiet text tabs for a secondary choice (the chart's Total / Indexed).
+  // Same props and keyboard behaviour as PillTabs, with no container.
+  function TextTabs({ id, label, value, items }) {
+    return `<div class="text-tabs" role="tablist" aria-label="${esc(label)}"${id ? ` id="${esc(id)}"` : ""}>${items
+      .map((it) => {
+        const on = it.value === value;
+        return `<button type="button" class="text-tab" role="tab" data-value="${esc(it.value)}" aria-selected="${on}" tabindex="${on ? 0 : -1}">${esc(it.label)}</button>`;
+      })
+      .join("")}</div>`;
+  }
+
   // Arrow keys, Home and End move between tabs (the same keys Radix Tabs uses on the main site).
-  function bindPillTabs(el, onChange) {
+  function bindTabs(el, onChange) {
     const values = () => [...el.querySelectorAll("[role=tab]")].map((b) => b.dataset.value);
     el.addEventListener("click", (e) => {
       const b = e.target.closest("[role=tab]");
@@ -48,5 +59,5 @@
         .join("")}</select><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></label>`;
   }
 
-  window.UI = { buttonClass, itemClass, submitClass, PillTabs, bindPillTabs, Select, esc };
+  window.UI = { buttonClass, itemClass, submitClass, PillTabs, TextTabs, bindTabs, bindPillTabs: bindTabs, Select, esc };
 })();

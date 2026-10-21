@@ -43,7 +43,7 @@
     platform: TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "all",
     range: { ...PRESETS[3].range(), preset: "30d" },
     show: {}, // per list: "count" or "share"
-    chartMode: "stacked", // All tab: "stacked" or "indexed"
+    chartMode: "total", // All tab: "total" or "indexed"
   };
   const NAMES = { all: "All", tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube" };
 
@@ -274,7 +274,7 @@
     if (chart) bindChart(chart);
     const toggle = root.querySelector("#chart-mode");
     if (toggle)
-      UI.bindPillTabs(toggle, (v, focus) => {
+      UI.bindTabs(toggle, (v, focus) => {
         state.chartMode = v;
         renderAnalytics();
         if (focus) root.querySelector(`#chart-mode [data-value="${v}"]`).focus();
@@ -384,7 +384,7 @@
       name: "combined",
       head: headHtml(""),
       kpis,
-      chart: state.chartMode === "indexed" && r.start !== r.end ? indexedChart(r) : stackedChart(r),
+      chart: (state.chartMode === "indexed" && indexedChart(r)) || totalChart(r),
       lists: pairsHtml([[followersList, viewsList], [countriesList, delivList]]),
     };
   }
@@ -443,7 +443,7 @@
 
   // ---------- Chart models ----------
   // Every chart is a model: points in time (ts), a y maximum, and series to draw. The same renderer,
-  // crosshair and tooltip serve all three kinds: "single", "stacked" and "indexed".
+  // crosshair and tooltip serve all three kinds: "single", "total" and "indexed".
 
   const COLORS = { tiktok: "var(--tiktok)", instagram: "var(--instagram)", youtube: "var(--youtube)" };
 
@@ -467,86 +467,149 @@
     };
   }
 
-  // Views per platform for every point in the range: hourly for a single day, daily otherwise.
-  // Null when any platform has nothing, because a stack missing a platform would misstate the total.
-  function viewsGrid(r) {
-    const days = allIn(r);
-    if (r.start === r.end) {
-      const d = days[0];
-      if (!d || !d.hours || !ORDER.every((p) => Array.isArray(d.hours[p]))) return null;
-      return { hourly: true, ts: d.hours.tiktok.map((_, i) => r.start + i * 3600e3), by: Object.fromEntries(ORDER.map((p) => [p, d.hours[p].slice()])) };
+  // ---------- Buckets (All tab) ----------
+  // 1–2 days hourly, 3–31 days daily, 32–120 days weekly (weeks start on Monday), over 120 days monthly.
+  // Weeks and months are cut at the range edges, so the first and last bucket can be shorter.
+
+  function bucketUnit(r) {
+    const days = Math.round((r.end - r.start) / DAY) + 1;
+    return days <= 2 ? "hour" : days <= 31 ? "day" : days <= 120 ? "week" : "month";
+  }
+  function buckets(r, unit) {
+    const out = [];
+    if (unit === "hour") {
+      for (let d = r.start; d <= r.end; d += DAY) for (let h = 0; h < 24; h++) out.push({ start: d, end: d, t: d + h * 3600e3, hour: h });
+      return out;
     }
-    const byDate = new Map(days.map((d) => [d.date, d]));
-    const ts = [];
-    const by = { tiktok: [], instagram: [], youtube: [] };
-    for (let t = r.start; t <= r.end; t += DAY) {
-      ts.push(t);
-      const d = byDate.get(iso(t));
-      for (const p of ORDER) by[p].push(d && isNum(d.views[p]) ? d.views[p] : null);
+    for (let s = r.start; s <= r.end; ) {
+      const dt = new Date(s);
+      let last;
+      if (unit === "day") last = s;
+      else if (unit === "week") last = s + (6 - ((dt.getUTCDay() + 6) % 7)) * DAY; // through Sunday
+      else last = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0);
+      const end = Math.min(last, r.end);
+      const full = unit === "day" || (unit === "week" ? end - s === 6 * DAY : new Date(s).getUTCDate() === 1 && end === last);
+      out.push({ start: s, end, t: s, full });
+      s = end + DAY;
     }
-    if (!ORDER.every((p) => by[p].some((v) => v != null))) return null;
-    return { hourly: false, ts, by };
+    return out;
   }
 
-  function stackedChart(r) {
-    const g = viewsGrid(r);
+  // Views per platform per bucket. Null when any platform has nothing in the range: a total missing a
+  // platform isn't a total.
+  function viewsGrid(r, unit) {
+    const days = allIn(r);
+    const byDate = new Map(days.map((d) => [d.date, d]));
+    const bs = buckets(r, unit);
+    const by = { tiktok: [], instagram: [], youtube: [] };
+    for (const b of bs) {
+      for (const p of ORDER) {
+        let s = 0;
+        let seen = false;
+        if (unit === "hour") {
+          const d = byDate.get(iso(b.start));
+          const v = d && d.hours && d.hours[p] && d.hours[p][b.hour];
+          if (isNum(v)) (s = v), (seen = true);
+        } else {
+          for (let t = b.start; t <= b.end; t += DAY) {
+            const d = byDate.get(iso(t));
+            if (d && isNum(d.views[p])) (s += d.views[p]), (seen = true);
+          }
+        }
+        by[p].push(seen ? s : null);
+      }
+    }
+    if (!ORDER.every((p) => by[p].some((v) => v != null))) return null;
+    return { unit, buckets: bs, by };
+  }
+  const totalsOf = (g) => g.buckets.map((_, i) => (ORDER.some((p) => g.by[p][i] != null) ? ORDER.reduce((a, p) => a + (g.by[p][i] || 0), 0) : null));
+
+  // One line: views across all three platforms. The breakdown only appears in the tooltip.
+  function totalChart(r) {
+    const unit = bucketUnit(r);
+    const g = viewsGrid(r, unit);
     if (!g) return null;
-    const pr = previousRange(r);
-    const pg = viewsGrid(pr);
-    const n = g.ts.length;
-    const totalAt = (grid, i) => (ORDER.some((p) => grid.by[p][i] != null) ? ORDER.reduce((a, p) => a + (grid.by[p][i] || 0), 0) : null);
-    const totals = g.ts.map((_, i) => totalAt(g, i));
-    const prevTotals = pg ? pg.ts.map((_, i) => totalAt(pg, i)) : null;
-    const max = niceMax(Math.max(1, ...totals.filter(isNum), ...(prevTotals || []).filter(isNum)));
-    const sum = totals.reduce((a, b) => a + (b || 0), 0);
+    const pg = viewsGrid(previousRange(r), unit);
+    const totals = totalsOf(g);
+    const prev = pg ? totalsOf(pg) : null;
+    const max = niceMax(Math.max(1, ...totals.filter(isNum), ...(prev || []).filter(isNum)));
+    const per = { hour: "hour", day: "day", week: "week", month: "month" }[unit];
     return {
-      kind: "stacked",
-      ts: g.ts,
-      prevTs: pg ? pg.ts : null,
-      hourly: g.hourly,
+      kind: "total",
+      unit,
+      buckets: g.buckets,
+      prevBuckets: pg ? pg.buckets : null,
+      ts: g.buckets.map((b) => b.t),
       max,
-      bands: ORDER.map((p) => ({ p, name: NAMES[p], values: g.by[p] })), // bottom to top
-      totals,
-      prev: prevTotals,
-      prevLabel: `${periodName(r).replace(/^p/, "P")}, total`,
-      toggle: !g.hourly,
-      n,
-      aria: `Views on all three platforms, stacked, ${fmtRange(r)}: total ${exact(sum)}. ${ORDER.map((p) => `${NAMES[p]} ${exact(g.by[p].reduce((a, b) => a + (b || 0), 0))}`).join(", ")}.`,
+      cur: totals,
+      by: g.by,
+      prev,
+      label: "Views",
+      prevLabel: periodName(r).replace(/^p/, "P"),
+      toggle: unit !== "hour",
+      smooth: true,
+      aria: `Views on TikTok, Instagram and YouTube together, by ${per}, ${fmtRange(r)}: total ${exact(totals.reduce((a, b) => a + (b || 0), 0))}.`,
     };
   }
 
   // Each platform's views as a 7-day average, rebased to 100 on the first day of the range, so growth
   // can be compared regardless of size. The average stops a single big day setting the baseline.
+  // One point per bucket, read at the bucket's last day.
   function indexedChart(r) {
-    const g = viewsGrid({ start: r.start - 6 * DAY, end: r.end });
-    if (!g) return null;
+    const unit = bucketUnit(r);
+    if (unit === "hour") return null;
+    const from = r.start - 6 * DAY;
+    const daily = viewsGrid({ start: from, end: r.end }, "day");
+    if (!daily) return null;
+    const avgAt = (p, t) => {
+      const i = Math.round((t - from) / DAY);
+      const win = daily.by[p].slice(Math.max(0, i - 6), i + 1).filter(isNum);
+      return win.length ? win.reduce((a, b) => a + b, 0) / win.length : null;
+    };
+    const bs = buckets(r, unit);
     const lines = [];
     for (const p of ORDER) {
-      const raw = g.by[p];
-      const avg = raw.map((_, i) => {
-        if (i < 6) return null;
-        const win = raw.slice(i - 6, i + 1).filter(isNum);
-        return win.length ? win.reduce((a, b) => a + b, 0) / win.length : null;
-      });
-      const inRange = avg.slice(6);
-      const base = inRange.find((v) => v);
-      if (!base) continue;
-      lines.push({ p, name: NAMES[p], values: inRange.map((v) => (v == null ? null : (v / base) * 100)) });
+      const base = avgAt(p, r.start);
+      if (!base) return null;
+      lines.push({ p, name: NAMES[p], values: bs.map((b) => {
+        const v = avgAt(p, b.end);
+        return v == null ? null : (v / base) * 100;
+      }) });
     }
-    if (lines.length !== ORDER.length) return null;
     const vals = lines.flatMap((l) => l.values).filter(isNum);
     return {
       kind: "indexed",
-      ts: g.ts.slice(6),
-      hourly: false,
+      unit,
+      buckets: bs,
+      ts: bs.map((b) => b.t),
       max: niceMax(Math.max(...vals, 100)),
       lines,
       baseT: r.start,
       toggle: true,
+      smooth: true,
       aria: `Views growth by platform, ${fmtRange(r)}, 7-day average indexed to 100 on ${fmtDay(r.start, true)}. ${lines
         .map((l) => `${l.name} ends at ${l.values[l.values.length - 1].toFixed(0)}`)
         .join(", ")}.`,
     };
+  }
+
+  // Tooltip heading for a bucket
+  function bucketLabel(b, unit) {
+    if (unit === "hour") return when(b.t, true);
+    if (unit === "day") return dayLong(b.start);
+    if (unit === "month" && b.full) return new Date(b.start).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+    const a = new Date(b.start);
+    const z = new Date(b.end);
+    const opt = { weekday: "short", day: "numeric", timeZone: "UTC" };
+    const head = a.toLocaleDateString("en-GB", a.getUTCMonth() === z.getUTCMonth() ? opt : { ...opt, month: "long" });
+    return `${head} – ${dayLong(b.end)}`;
+  }
+  function axisLabel(m, i) {
+    const b = m.buckets ? m.buckets[i] : null;
+    if (!b) return m.hourly ? hourLabel(m.ts[i]) : fmtDay(m.ts[i]);
+    if (m.unit === "hour") return m.buckets.length > 24 ? `${fmtDay(b.t)}, ${hourLabel(b.t)}` : hourLabel(b.t);
+    if (m.unit === "month") return new Date(b.start).toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
+    return fmtDay(b.start);
   }
 
   // ---------- Chart rendering ----------
@@ -554,50 +617,67 @@
   const W = 1000;
   const H = 300;
 
+  // Monotone cubic interpolation (Fritsch–Carlson): smooth, never overshoots between points.
+  function monotone(pts) {
+    const n = pts.length;
+    if (n === 1) return `M${pts[0][0]} ${pts[0][1]}`;
+    const dx = [];
+    const m = [];
+    for (let i = 0; i < n - 1; i++) {
+      dx.push(pts[i + 1][0] - pts[i][0]);
+      m.push((pts[i + 1][1] - pts[i][1]) / dx[i]);
+    }
+    const t = [m[0]];
+    for (let i = 1; i < n - 1; i++) {
+      t.push(m[i - 1] * m[i] <= 0 ? 0 : (3 * (dx[i - 1] + dx[i])) / ((2 * dx[i] + dx[i - 1]) / m[i - 1] + (dx[i] + 2 * dx[i - 1]) / m[i]));
+    }
+    t.push(m[n - 2]);
+    let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < n - 1; i++) {
+      const h = dx[i] / 3;
+      d += ` C${(pts[i][0] + h).toFixed(1)} ${(pts[i][1] + t[i] * h).toFixed(1)} ${(pts[i + 1][0] - h).toFixed(1)} ${(pts[i + 1][1] - t[i + 1] * h).toFixed(1)} ${pts[i + 1][0].toFixed(1)} ${pts[i + 1][1].toFixed(1)}`;
+    }
+    return d;
+  }
+
   function chartHtml(m) {
     const n = m.ts.length;
     const x = (i) => (n === 1 ? W / 2 : (i / (n - 1)) * W);
     const y = (v) => H - (v / m.max) * H;
-    const path = (vals) => {
-      let d = "";
-      let pen = false;
+    // Runs of points without gaps
+    const runs = (vals) => {
+      const out = [];
+      let cur = [];
       vals.forEach((v, i) => {
-        if (i >= n || v == null) return (pen = false);
-        d += `${pen ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)} `;
-        pen = true;
+        if (i >= n || v == null) {
+          if (cur.length) out.push(cur);
+          cur = [];
+        } else cur.push([x(i), y(v)]);
       });
-      return d;
+      if (cur.length) out.push(cur);
+      return out;
     };
+    const path = (vals) =>
+      runs(vals)
+        .map((r) => (m.smooth ? monotone(r) : r.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ")))
+        .join(" ");
+    const area = (vals) =>
+      runs(vals)
+        .map((r) => {
+          const line = m.smooth ? monotone(r) : r.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
+          return `${line} L${r[r.length - 1][0].toFixed(1)} ${H} L${r[0][0].toFixed(1)} ${H} Z`;
+        })
+        .join(" ");
     const dotted = (vals) => `<path class="s-previous" vector-effect="non-scaling-stroke" d="${path(vals)}"/>`;
 
     let body = "";
     let legend = "";
-    if (m.kind === "single") {
-      const d = path(m.cur);
-      const first = m.cur.findIndex((v) => v != null);
-      let last = n - 1;
-      while (m.cur[last] == null) last--;
+    if (m.kind === "single" || m.kind === "total") {
+      // Monochrome: one solid line with a faint fill, the comparison dotted with no fill
       body = `<defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.06"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
-        <path d="${d}L${x(last)} ${H} L${x(first)} ${H} Z" fill="url(#fill)"/>
-        ${m.prev ? dotted(m.prev) : ""}<path class="s-current" vector-effect="non-scaling-stroke" d="${d}"/>`;
+        <path d="${area(m.cur)}" fill="url(#fill)"/>
+        ${m.prev ? dotted(m.prev) : ""}<path class="s-current" vector-effect="non-scaling-stroke" d="${path(m.cur)}"/>`;
       legend = `<span><i class="line"></i>${esc(m.label)}</span>${m.prev ? `<span><i class="line dotted"></i>${esc(m.prevLabel)}</span>` : ""}`;
-    } else if (m.kind === "stacked") {
-      // Cumulative edges: band k fills between edge k and edge k+1
-      const edges = [m.ts.map(() => 0)];
-      m.bands.forEach((b, k) => edges.push(edges[k].map((v, i) => v + (b.values[i] || 0))));
-      m.bands.forEach((b, k) => {
-        const up = edges[k + 1].map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`);
-        const down = edges[k].map((v, i) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`).reverse();
-        body += `<path class="band" style="--c:${COLORS[b.p]}" d="M${up.join(" L")} L${down.join(" L")} Z"/>`;
-      });
-      m.bands.forEach((b, k) => (body += `<path class="band-edge" style="--c:${COLORS[b.p]}" vector-effect="non-scaling-stroke" d="${path(edges[k + 1])}"/>`));
-      if (m.prev) body += dotted(m.prev);
-      legend =
-        m.bands
-          .slice()
-          .reverse()
-          .map((b) => `<span><i class="swatch" style="--c:${COLORS[b.p]}"></i>${esc(b.name)}</span>`)
-          .join("") + (m.prev ? `<span><i class="line dotted"></i>${esc(m.prevLabel)}</span>` : "");
     } else {
       m.lines.forEach((l) => (body += `<path class="s-index" style="--c:${COLORS[l.p]}" vector-effect="non-scaling-stroke" d="${path(l.values)}"/>`));
       legend =
@@ -605,17 +685,16 @@
         `<span>7-day average views, ${esc(fmtDay(m.baseT))} = 100</span>`;
     }
 
+    // X axis: both ends plus two points between
     const ticks = [0, Math.round((n - 1) / 3), Math.round(((n - 1) * 2) / 3), n - 1].filter((v, i, a) => a.indexOf(v) === i);
-    const axis = ticks
-      .map((i) => `<span style="left:${n === 1 ? 50 : (i / (n - 1)) * 100}%">${esc(m.hourly ? hourLabel(m.ts[i]) : fmtDay(m.ts[i]))}</span>`)
-      .join("");
+    const axis = ticks.map((i) => `<span style="left:${n === 1 ? 50 : (i / (n - 1)) * 100}%">${esc(axisLabel(m, i))}</span>`).join("");
     const toggle = m.toggle
-      ? UI.PillTabs({
+      ? UI.TextTabs({
           id: "chart-mode",
           label: "Chart",
           value: m.kind,
           items: [
-            { value: "stacked", label: "Stacked" },
+            { value: "total", label: "Total" },
             { value: "indexed", label: "Indexed" },
           ],
         })
@@ -661,46 +740,45 @@
   }
 
   function tooltipFor(m, i) {
-    const t = m.ts[i];
-    const pt = m.prevTs && m.prevTs[i];
-    const compare = pt != null ? `vs ${when(pt, m.hourly)}` : null;
     if (m.kind === "single") {
+      const t = m.ts[i];
+      const pt = m.prevTs && m.prevTs[i];
       const v = m.cur[i];
       const pv = m.prev && m.prev[i];
       return Tooltip({
         heading: when(t, m.hourly),
-        compare,
+        compare: pt != null ? `vs ${when(pt, m.hourly)}` : null,
         rows: [
           { marker: "dot", color: "var(--stroke)", label: m.label, value: v == null ? "No data" : exact(v) },
           ...(m.prev ? [{ marker: "ring", color: "var(--stroke)", label: "Previous period", value: pv == null ? "No data" : exact(pv), extra: change(v, pv) || "" }] : []),
         ],
       });
     }
-    if (m.kind === "stacked") {
-      const vals = m.bands.map((b) => b.values[i] || 0);
+    if (m.kind === "total") {
+      const pb = m.prevBuckets && m.prevBuckets[i];
+      const vals = ORDER.map((p) => m.by[p][i] || 0);
       const pct = shares(vals);
-      const rows = m.bands
-        .map((b, k) => ({ marker: "dot", color: COLORS[b.p], label: b.name, value: exact(vals[k]), extra: `${pct[k]}%`, v: vals[k] }))
-        .sort((a, b) => b.v - a.v);
-      const tot = m.totals[i];
+      // The platform colours appear here and nowhere else on the Total chart
+      const rows = ORDER.map((p, k) => ({ marker: "dot", color: COLORS[p], label: NAMES[p], value: exact(vals[k]), extra: `${pct[k]}%`, v: vals[k] })).sort((a, b) => b.v - a.v);
+      const tot = m.cur[i];
       const pv = m.prev && m.prev[i];
-      return Tooltip({ heading: when(t, m.hourly), compare, total: { label: "Total", value: tot == null ? "No data" : exact(tot), extra: change(tot, pv) || "" }, rows });
+      return Tooltip({
+        heading: bucketLabel(m.buckets[i], m.unit),
+        compare: pb ? `vs ${bucketLabel(pb, m.unit)}` : null,
+        total: { label: "Total", value: tot == null ? "No data" : exact(tot), extra: change(tot, pv) || "" },
+        rows,
+      });
     }
     const rows = m.lines
       .map((l) => ({ marker: "dot", color: COLORS[l.p], label: l.name, value: l.values[i] == null ? "No data" : l.values[i].toFixed(1), v: l.values[i] || 0 }))
       .sort((a, b) => b.v - a.v);
-    return Tooltip({ heading: dayLong(t), compare: `vs ${dayLong(m.baseT)} = 100`, rows });
+    return Tooltip({ heading: bucketLabel(m.buckets[i], m.unit), compare: `vs ${dayLong(m.baseT)} = 100`, rows });
   }
 
-  // Points to mark at index i, as { v, color, ring }
+  // Points to mark at index i, as { v, color, ring }. The Total chart gets one dot, on its line.
   function marksFor(m, i) {
     if (m.kind === "single") return [{ v: m.cur[i], color: "var(--stroke)" }, ...(m.prev ? [{ v: m.prev[i], color: "var(--stroke)", ring: true }] : [])];
-    if (m.kind === "stacked") {
-      let acc = 0;
-      const out = m.bands.map((b) => ({ v: (acc += b.values[i] || 0), color: COLORS[b.p] }));
-      if (m.prev) out.push({ v: m.prev[i], color: "var(--stroke)", ring: true });
-      return out;
-    }
+    if (m.kind === "total") return [{ v: m.cur[i], color: "var(--stroke)" }];
     return m.lines.map((l) => ({ v: l.values[i], color: COLORS[l.p] }));
   }
 
