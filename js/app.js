@@ -323,12 +323,12 @@
     const prevDays = allIn(pr);
     const kpis = [];
 
-    // Followers and subscribers are added only under a label that says so.
+    // TikTok and Instagram followers plus YouTube subscribers (labelled "Total followers" at your request).
     const aud = latestAudience(days);
     const audPrev = latestAudience(prevDays);
     const sum = (o) => (ORDER.every((p) => isNum(o[p])) ? ORDER.reduce((a, p) => a + o[p], 0) : null);
     const audTotal = sum(aud);
-    if (audTotal != null) kpis.push(kpiHtml("Followers + subscribers", format(audTotal), deltaHtml(change(audTotal, sum(audPrev)), r)));
+    if (audTotal != null) kpis.push(kpiHtml("Total followers", format(audTotal), deltaHtml(change(audTotal, sum(audPrev)), r)));
 
     const views = totalOf(days, "views");
     const viewsPrev = totalOf(prevDays, "views");
