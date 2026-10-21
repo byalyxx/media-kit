@@ -1,6 +1,9 @@
 // What each platform reports, in its own terms. Metrics are not shared between platforms:
 // a KPI or list only appears when the data for it exists.
 //
+// `tooltip` is the secondary figure in the chart tooltip: a count (`sum`) or a rate (`num` ÷ `den`,
+// so a week's rate is weighted by that week's views rather than added up day by day).
+//
 // `combined` names the metrics that measure the same thing on every platform, for the All tab.
 // Engagements are likes + comments + shares on all three (saves are left out: YouTube has none).
 //
@@ -43,6 +46,7 @@
       name: "TikTok",
       chart: { key: "views", label: "Video views" },
       combined: { views: "views", viewsLabel: "video views", audience: "followers", audienceLabel: "followers" },
+      tooltip: { label: "Engagement rate", num: ["likes", "comments", "shares"], den: "views", scale: 100, format: "percent" },
       kpis: [
         { label: "Followers", value: latest("followers"), format: "compact" },
         { label: "Video views", value: sum("views"), format: "compact" },
@@ -67,6 +71,7 @@
       chart: { key: "reach", label: "Reach" },
       // Plays, not reach: plays count views the way TikTok and YouTube do, reach counts accounts.
       combined: { views: "plays", viewsLabel: "plays", audience: "followers", audienceLabel: "followers" },
+      tooltip: { label: "Accounts engaged", sum: "accountsEngaged", format: "number" },
       kpis: [
         { label: "Followers", value: latest("followers"), format: "compact" },
         { label: "Reach", value: sum("reach"), format: "compact" },
@@ -89,6 +94,7 @@
       name: "YouTube",
       chart: { key: "views", label: "Views" },
       combined: { views: "views", viewsLabel: "views", audience: "subscribers", audienceLabel: "subscribers" },
+      tooltip: { label: "Avg view duration", num: ["watchMinutes"], den: "views", scale: 60, format: "duration" },
       kpis: [
         { label: "Subscribers", value: latest("subscribers"), format: "compact" },
         { label: "Views", value: sum("views"), format: "compact" },

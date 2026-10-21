@@ -82,7 +82,6 @@
   const change = (cur, prev) => (cur == null || prev == null || !prev ? null : signed(((cur - prev) / prev) * 100, 1, "%"));
   const isNum = (v) => typeof v === "number" && isFinite(v);
   const dayLong = (t) => new Date(t).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
-  const when = (t, hourly) => (hourly ? `${dayLong(t)}, ${hourLabel(t)}` : dayLong(t));
   const periodName = (r) => (r.start === r.end ? "previous day" : `previous ${Math.round((r.end - r.start) / DAY) + 1} days`);
 
   // ---------- Data access ----------
@@ -108,24 +107,6 @@
     }
     return seen ? [...out.entries()].sort((a, b) => b[1] - a[1]) : null;
   }
-  // Chart points: hourly for a single day, daily otherwise.
-  function series(p, r, key) {
-    const days = daysIn(p, r);
-    if (!days.length) return null;
-    if (r.start === r.end) {
-      const h = days[0].hours;
-      if (!h) return null;
-      return h.map((v, i) => ({ t: r.start + i * 3600e3, v, hourly: true }));
-    }
-    const byDate = new Map(days.map((d) => [d.date, d.m && d.m[key]]));
-    const pts = [];
-    for (let t = r.start; t <= r.end; t += DAY) {
-      const v = byDate.get(iso(t));
-      pts.push({ t, v: typeof v === "number" ? v : null });
-    }
-    return pts.some((x) => x.v != null) ? pts : null;
-  }
-
   // The All tab: one entry per date with each platform's comparable figures (see `combined` in
   // js/platforms.js), plus anything the `all` block in js/data.js adds.
   let allMap = null;
@@ -441,35 +422,10 @@
   }
   const platformIcon = (p) => `<span class="ico brand" aria-hidden="true">${ICONS[p]}</span>`;
 
-  // ---------- Chart models ----------
-  // Every chart is a model: points in time (ts), a y maximum, and series to draw. The same renderer,
-  // crosshair and tooltip serve all three kinds: "single", "total" and "indexed".
-
-  const COLORS = { tiktok: "var(--tiktok)", instagram: "var(--instagram)", youtube: "var(--youtube)" };
-
-  function singleChart(p, def, r) {
-    const cur = series(p, r, def.chart.key);
-    if (!cur) return null;
-    const prev = series(p, previousRange(r), def.chart.key);
-    const vals = cur.concat(prev || []).map((x) => x.v).filter((v) => v != null);
-    const label = def.chart.label;
-    return {
-      kind: "single",
-      ts: cur.map((x) => x.t),
-      prevTs: prev ? prev.map((x) => x.t) : null,
-      hourly: !!cur[0].hourly,
-      max: niceMax(Math.max(...vals, 1)),
-      cur: cur.map((x) => x.v),
-      prev: prev ? prev.map((x) => x.v) : null,
-      label,
-      prevLabel: periodName(r).replace(/^p/, "P"),
-      aria: `${label}, ${fmtRange(r)}: total ${exact(cur.reduce((a, b) => a + (b.v || 0), 0))}.`,
-    };
-  }
-
-  // ---------- Buckets (All tab) ----------
-  // 1–2 days hourly, 3–31 days daily, 32–120 days weekly (weeks start on Monday), over 120 days monthly.
-  // Weeks and months are cut at the range edges, so the first and last bucket can be shorter.
+  // ---------- Buckets (every tab) ----------
+  // One rule everywhere: 1–2 days hourly, 3–31 days daily, 32–120 days weekly (Monday start), over
+  // 120 days monthly. Weeks and months are cut at the range edges; those buckets are marked partial.
+  // The comparison uses the same buckets moved back by the length of the period.
 
   function bucketUnit(r) {
     const days = Math.round((r.end - r.start) / DAY) + 1;
@@ -478,88 +434,164 @@
   function buckets(r, unit) {
     const out = [];
     if (unit === "hour") {
-      for (let d = r.start; d <= r.end; d += DAY) for (let h = 0; h < 24; h++) out.push({ start: d, end: d, t: d + h * 3600e3, hour: h });
+      for (let d = r.start; d <= r.end; d += DAY) for (let h = 0; h < 24; h++) out.push({ start: d, end: d, t: d + h * 3600e3, hour: h, full: true });
       return out;
     }
     for (let s = r.start; s <= r.end; ) {
       const dt = new Date(s);
-      let last;
-      if (unit === "day") last = s;
-      else if (unit === "week") last = s + (6 - ((dt.getUTCDay() + 6) % 7)) * DAY; // through Sunday
-      else last = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0);
+      let first = s;
+      let last = s;
+      if (unit === "week") {
+        first = s - ((dt.getUTCDay() + 6) % 7) * DAY; // Monday
+        last = first + 6 * DAY;
+      } else if (unit === "month") {
+        first = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), 1);
+        last = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0);
+      }
       const end = Math.min(last, r.end);
-      const full = unit === "day" || (unit === "week" ? end - s === 6 * DAY : new Date(s).getUTCDate() === 1 && end === last);
-      out.push({ start: s, end, t: s, full });
+      out.push({ start: s, end, t: s, full: s === first && end === last, whole: { start: first, end: last } });
       s = end + DAY;
     }
     return out;
   }
+  const shiftBuckets = (bs, by) => bs.map((b) => ({ ...b, start: b.start - by, end: b.end - by, t: b.t - by, whole: b.whole && { start: b.whole.start - by, end: b.whole.end - by } }));
+  const periodLength = (r) => r.end - r.start + DAY;
 
-  // Views per platform per bucket. Null when any platform has nothing in the range: a total missing a
-  // platform isn't a total.
-  function viewsGrid(r, unit) {
-    const days = allIn(r);
-    const byDate = new Map(days.map((d) => [d.date, d]));
+  // Sum a count metric over a bucket from a date → value lookup. Null when the bucket has no data.
+  function sumBucket(get, b, unit) {
+    if (unit === "hour") {
+      const v = get(b.start, b.hour);
+      return isNum(v) ? v : null;
+    }
+    let s = 0;
+    let seen = false;
+    for (let t = b.start; t <= b.end; t += DAY) {
+      const v = get(t);
+      if (isNum(v)) (s += v), (seen = true);
+    }
+    return seen ? s : null;
+  }
+
+  // A platform's metric per bucket. Counts sum. Rates are averaged across the bucket, weighted by
+  // their denominator (e.g. engagement rate = all engagements ÷ all views), never summed.
+  function platformMetric(p, bs, unit, spec) {
+    const days = new Map(((DATA.platforms[p] && DATA.platforms[p].days) || []).map((d) => [d.date, d]));
+    const metric = (key) => (t, hour) => {
+      const d = days.get(iso(t));
+      if (!d) return null;
+      if (hour != null) return d.hours && key === PLATFORMS[p].chart.key ? d.hours[hour] : null; // hourly data covers the charted metric only
+      return d.m && d.m[key];
+    };
+    return bs.map((b) => {
+      if (spec.sum) return sumBucket(metric(spec.sum), b, unit);
+      const num = spec.num.map((k) => sumBucket(metric(k), b, unit));
+      const den = sumBucket(metric(spec.den), b, unit);
+      return num.some((v) => v == null) || !den ? null : (num.reduce((a, v) => a + v, 0) / den) * spec.scale;
+    });
+  }
+
+  // Posts falling inside each bucket, best performer first
+  function postsIn(p, bs, unit) {
+    const posts = (DATA.platforms[p] && DATA.platforms[p].posts) || [];
+    return bs.map((b) =>
+      posts
+        .filter((x) => {
+          const t = parse(x.date);
+          if (t < b.start || t > b.end) return false;
+          if (unit !== "hour") return true;
+          return x.time ? parseInt(x.time, 10) === b.hour : false; // without a time a post can't be placed in an hour
+        })
+        .sort((a, c) => (c.views || 0) - (a.views || 0))
+    );
+  }
+
+  // ---------- Chart models ----------
+  // Every chart is a model: buckets, a y maximum, and series to draw. The same renderer, crosshair and
+  // tooltip serve all three kinds: "single" (a platform), "total" and "indexed" (the All tab).
+
+  const COLORS = { tiktok: "var(--tiktok)", instagram: "var(--instagram)", youtube: "var(--youtube)" };
+
+  function singleChart(p, def, r) {
+    const unit = bucketUnit(r);
     const bs = buckets(r, unit);
-    const by = { tiktok: [], instagram: [], youtube: [] };
-    for (const b of bs) {
-      for (const p of ORDER) {
-        let s = 0;
-        let seen = false;
-        if (unit === "hour") {
-          const d = byDate.get(iso(b.start));
-          const v = d && d.hours && d.hours[p] && d.hours[p][b.hour];
-          if (isNum(v)) (s = v), (seen = true);
-        } else {
-          for (let t = b.start; t <= b.end; t += DAY) {
-            const d = byDate.get(iso(t));
-            if (d && isNum(d.views[p])) (s += d.views[p]), (seen = true);
-          }
-        }
-        by[p].push(seen ? s : null);
-      }
+    const pbs = shiftBuckets(bs, periodLength(r));
+    const cur = platformMetric(p, bs, unit, { sum: def.chart.key });
+    if (!cur.some(isNum)) return null;
+    const prev = platformMetric(p, pbs, unit, { sum: def.chart.key });
+    const hasPrev = prev.some(isNum);
+    const sec = def.tooltip && platformMetric(p, bs, unit, def.tooltip);
+    const posts = postsIn(p, bs, unit);
+    return {
+      kind: "single",
+      unit,
+      buckets: bs,
+      prevBuckets: pbs,
+      ts: bs.map((b) => b.t),
+      max: niceMax(Math.max(1, ...cur.filter(isNum), ...(hasPrev ? prev.filter(isNum) : []))),
+      cur,
+      prev: hasPrev ? prev : null,
+      secondary: sec && sec.some(isNum) ? { label: def.tooltip.label, format: def.tooltip.format, values: sec } : null,
+      posts,
+      label: def.chart.label,
+      prevLabel: periodName(r).replace(/^p/, "P"),
+      aria: `${def.chart.label}, ${fmtRange(r)}, by ${unit}: total ${exact(cur.reduce((a, b) => a + (b || 0), 0))}.`,
+    };
+  }
+
+  // Views per platform per bucket for the All tab. Null when any platform has nothing in the range:
+  // a total missing a platform isn't a total.
+  function viewsGrid(bs, unit) {
+    const map = allByDate();
+    const by = {};
+    for (const p of ORDER) {
+      by[p] = bs.map((b) =>
+        sumBucket((t, hour) => {
+          const d = map.get(iso(t));
+          if (!d) return null;
+          return hour != null ? d.hours && d.hours[p] && d.hours[p][hour] : d.views[p];
+        }, b, unit)
+      );
     }
     if (!ORDER.every((p) => by[p].some((v) => v != null))) return null;
-    return { unit, buckets: bs, by };
+    return { buckets: bs, by };
   }
   const totalsOf = (g) => g.buckets.map((_, i) => (ORDER.some((p) => g.by[p][i] != null) ? ORDER.reduce((a, p) => a + (g.by[p][i] || 0), 0) : null));
 
   // One line: views across all three platforms. The breakdown only appears in the tooltip.
   function totalChart(r) {
     const unit = bucketUnit(r);
-    const g = viewsGrid(r, unit);
+    const bs = buckets(r, unit);
+    const g = viewsGrid(bs, unit);
     if (!g) return null;
-    const pg = viewsGrid(previousRange(r), unit);
+    const pbs = shiftBuckets(bs, periodLength(r));
+    const pg = viewsGrid(pbs, unit);
     const totals = totalsOf(g);
     const prev = pg ? totalsOf(pg) : null;
-    const max = niceMax(Math.max(1, ...totals.filter(isNum), ...(prev || []).filter(isNum)));
-    const per = { hour: "hour", day: "day", week: "week", month: "month" }[unit];
     return {
       kind: "total",
       unit,
-      buckets: g.buckets,
-      prevBuckets: pg ? pg.buckets : null,
-      ts: g.buckets.map((b) => b.t),
-      max,
+      buckets: bs,
+      prevBuckets: pbs,
+      ts: bs.map((b) => b.t),
+      max: niceMax(Math.max(1, ...totals.filter(isNum), ...(prev || []).filter(isNum))),
       cur: totals,
       by: g.by,
       prev,
       label: "Views",
       prevLabel: periodName(r).replace(/^p/, "P"),
       toggle: unit !== "hour",
-      smooth: true,
-      aria: `Views on TikTok, Instagram and YouTube together, by ${per}, ${fmtRange(r)}: total ${exact(totals.reduce((a, b) => a + (b || 0), 0))}.`,
+      aria: `Views on TikTok, Instagram and YouTube together, by ${unit}, ${fmtRange(r)}: total ${exact(totals.reduce((a, b) => a + (b || 0), 0))}.`,
     };
   }
 
   // Each platform's views as a 7-day average, rebased to 100 on the first day of the range, so growth
-  // can be compared regardless of size. The average stops a single big day setting the baseline.
-  // One point per bucket, read at the bucket's last day.
+  // can be compared regardless of size. One point per bucket, read at the bucket's last day.
   function indexedChart(r) {
     const unit = bucketUnit(r);
     if (unit === "hour") return null;
     const from = r.start - 6 * DAY;
-    const daily = viewsGrid({ start: from, end: r.end }, "day");
+    const days = buckets({ start: from, end: r.end }, "day");
+    const daily = viewsGrid(days, "day");
     if (!daily) return null;
     const avgAt = (p, t) => {
       const i = Math.round((t - from) / DAY);
@@ -571,42 +603,72 @@
     for (const p of ORDER) {
       const base = avgAt(p, r.start);
       if (!base) return null;
-      lines.push({ p, name: NAMES[p], values: bs.map((b) => {
-        const v = avgAt(p, b.end);
-        return v == null ? null : (v / base) * 100;
-      }) });
+      lines.push({
+        p,
+        name: NAMES[p],
+        values: bs.map((b) => {
+          const v = avgAt(p, b.end);
+          return v == null ? null : (v / base) * 100;
+        }),
+      });
     }
     const vals = lines.flatMap((l) => l.values).filter(isNum);
     return {
       kind: "indexed",
       unit,
-      buckets: bs,
+      buckets: bs.map((b) => ({ ...b, full: true })), // a 7-day average isn't cut short by the range edge
       ts: bs.map((b) => b.t),
       max: niceMax(Math.max(...vals, 100)),
       lines,
       baseT: r.start,
       toggle: true,
-      smooth: true,
       aria: `Views growth by platform, ${fmtRange(r)}, 7-day average indexed to 100 on ${fmtDay(r.start, true)}. ${lines
         .map((l) => `${l.name} ends at ${l.values[l.values.length - 1].toFixed(0)}`)
         .join(", ")}.`,
     };
   }
 
-  // Tooltip heading for a bucket
-  function bucketLabel(b, unit) {
-    if (unit === "hour") return when(b.t, true);
-    if (unit === "day") return dayLong(b.start);
-    if (unit === "month" && b.full) return new Date(b.start).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
-    const a = new Date(b.start);
-    const z = new Date(b.end);
-    const opt = { weekday: "short", day: "numeric", timeZone: "UTC" };
-    const head = a.toLocaleDateString("en-GB", a.getUTCMonth() === z.getUTCMonth() ? opt : { ...opt, month: "long" });
-    return `${head} – ${dayLong(b.end)}`;
+  // ---------- Bucket labels ----------
+
+  const dayMonth = (t) => new Date(t).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "long", timeZone: "UTC" });
+  const monthYear = (t) => new Date(t).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  function daySpan(a, z) {
+    const A = new Date(a);
+    const Z = new Date(z);
+    const month = (d) => d.toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+    return A.getUTCMonth() === Z.getUTCMonth() ? `${A.getUTCDate()}–${Z.getUTCDate()} ${month(Z)}` : `${A.getUTCDate()} ${month(A)}–${Z.getUTCDate()} ${month(Z)}`;
+  }
+  // What the point represents: "Fri 9 October · 18:00", "Fri 9 October 2026", "Week of 6–12 October", "October 2026"
+  function bucketName(b, unit, compare) {
+    let s;
+    if (unit === "hour") s = `${dayMonth(b.start)} · ${hourLabel(b.t)}`;
+    else if (unit === "day") s = compare ? dayMonth(b.start) : dayLong(b.start);
+    else if (unit === "week") s = `week of ${daySpan(b.start, b.end)}`;
+    else {
+      // A whole calendar month by name; anything else (a cut-short month, or a comparison window
+      // moved back by the period length) by its exact dates
+      const A = new Date(b.start);
+      const Z = new Date(b.end);
+      const wholeMonth = A.getUTCDate() === 1 && b.end === Date.UTC(A.getUTCFullYear(), A.getUTCMonth() + 1, 0);
+      s = wholeMonth
+        ? monthYear(b.start)
+        : A.getUTCFullYear() === Z.getUTCFullYear()
+          ? `${daySpan(b.start, b.end)} ${Z.getUTCFullYear()}`
+          : `${A.getUTCDate()} ${A.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" })}–${Z.getUTCDate()} ${monthYear(b.end)}`;
+    }
+    if (!compare && !b.full) s += " · partial";
+    return compare ? s : s.charAt(0).toUpperCase() + s.slice(1);
+  }
+  const bucketNote = (unit) => ({ week: "weekly total", month: "monthly total" })[unit] || "";
+  function headingFor(m, i) {
+    const b = m.buckets[i];
+    const pb = m.prevBuckets && m.prevBuckets[i];
+    const note = m.kind === "indexed" ? "" : bucketNote(m.unit);
+    const compare = m.kind === "indexed" ? `vs ${dayLong(m.baseT)} = 100` : pb ? `vs ${bucketName(pb, m.unit, true)}` : "";
+    return { heading: bucketName(b, m.unit, false), compare: [note, compare].filter(Boolean).join(" · ") };
   }
   function axisLabel(m, i) {
-    const b = m.buckets ? m.buckets[i] : null;
-    if (!b) return m.hourly ? hourLabel(m.ts[i]) : fmtDay(m.ts[i]);
+    const b = m.buckets[i];
     if (m.unit === "hour") return m.buckets.length > 24 ? `${fmtDay(b.t)}, ${hourLabel(b.t)}` : hourLabel(b.t);
     if (m.unit === "month") return new Date(b.start).toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
     return fmtDay(b.start);
@@ -617,10 +679,12 @@
   const W = 1000;
   const H = 300;
 
-  // Monotone cubic interpolation (Fritsch–Carlson): smooth, never overshoots between points.
-  function monotone(pts) {
+  // Monotone cubic interpolation (Fritsch–Carlson). Unlike a plain spline it never overshoots, so the
+  // curve can't dip below zero between two low points or invent a peak a point doesn't have.
+  // Returns one cubic segment per pair of points.
+  function monotoneSegments(pts) {
     const n = pts.length;
-    if (n === 1) return `M${pts[0][0]} ${pts[0][1]}`;
+    if (n < 2) return [];
     const dx = [];
     const m = [];
     for (let i = 0; i < n - 1; i++) {
@@ -632,62 +696,95 @@
       t.push(m[i - 1] * m[i] <= 0 ? 0 : (3 * (dx[i - 1] + dx[i])) / ((2 * dx[i] + dx[i - 1]) / m[i - 1] + (dx[i] + 2 * dx[i - 1]) / m[i]));
     }
     t.push(m[n - 2]);
-    let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
-    for (let i = 0; i < n - 1; i++) {
+    // End tangents: keep them from pointing past the neighbouring point's level
+    if (m[0] * t[0] <= 0) t[0] = 0;
+    if (m[n - 2] * t[n - 1] <= 0) t[n - 1] = 0;
+    const f = (v) => v.toFixed(1);
+    return pts.slice(0, -1).map((p, i) => {
       const h = dx[i] / 3;
-      d += ` C${(pts[i][0] + h).toFixed(1)} ${(pts[i][1] + t[i] * h).toFixed(1)} ${(pts[i + 1][0] - h).toFixed(1)} ${(pts[i + 1][1] - t[i + 1] * h).toFixed(1)} ${pts[i + 1][0].toFixed(1)} ${pts[i + 1][1].toFixed(1)}`;
-    }
-    return d;
+      const q = pts[i + 1];
+      return { from: p, d: `C${f(p[0] + h)} ${f(p[1] + t[i] * h)} ${f(q[0] - h)} ${f(q[1] - t[i + 1] * h)} ${f(q[0])} ${f(q[1])}` };
+    });
   }
 
   function chartHtml(m) {
     const n = m.ts.length;
     const x = (i) => (n === 1 ? W / 2 : (i / (n - 1)) * W);
     const y = (v) => H - (v / m.max) * H;
-    // Runs of points without gaps
-    const runs = (vals) => {
-      const out = [];
+    const f = (v) => v.toFixed(1);
+    const partial = (i) => m.buckets[i] && !m.buckets[i].full;
+    // Splits a series into runs without gaps, then into curve segments. A segment touching a partial
+    // bucket goes in its own path, styled lighter, so a cut-short week doesn't read as a drop.
+    function curves(vals) {
+      const runs = [];
       let cur = [];
       vals.forEach((v, i) => {
-        if (i >= n || v == null) {
-          if (cur.length) out.push(cur);
+        if (v == null) {
+          if (cur.length) runs.push(cur);
           cur = [];
-        } else cur.push([x(i), y(v)]);
+        } else cur.push(i);
       });
-      if (cur.length) out.push(cur);
-      return out;
-    };
-    const path = (vals) =>
-      runs(vals)
-        .map((r) => (m.smooth ? monotone(r) : r.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ")))
-        .join(" ");
-    const area = (vals) =>
-      runs(vals)
-        .map((r) => {
-          const line = m.smooth ? monotone(r) : r.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
-          return `${line} L${r[r.length - 1][0].toFixed(1)} ${H} L${r[0][0].toFixed(1)} ${H} Z`;
-        })
-        .join(" ");
-    const dotted = (vals) => `<path class="s-previous" vector-effect="non-scaling-stroke" d="${path(vals)}"/>`;
+      if (cur.length) runs.push(cur);
+      let main = "";
+      let part = "";
+      let area = "";
+      let lastMain = null;
+      let lastPart = null;
+      for (const run of runs) {
+        const pts = run.map((i) => [x(i), y(vals[i])]);
+        if (pts.length === 1) {
+          main += `M${f(pts[0][0])} ${f(pts[0][1])} h0.1 `;
+          continue;
+        }
+        const segs = monotoneSegments(pts);
+        area += `M${f(pts[0][0])} ${f(pts[0][1])} ${segs.map((s) => s.d).join(" ")} L${f(pts[pts.length - 1][0])} ${H} L${f(pts[0][0])} ${H} Z `;
+        segs.forEach((s, k) => {
+          const isPart = partial(run[k]) || partial(run[k + 1]);
+          const start = `M${f(s.from[0])} ${f(s.from[1])} `;
+          if (isPart) {
+            part += (lastPart === k ? "" : start) + s.d + " ";
+            lastPart = k + 1;
+            lastMain = null;
+          } else {
+            main += (lastMain === k ? "" : start) + s.d + " ";
+            lastMain = k + 1;
+            lastPart = null;
+          }
+        });
+        lastMain = lastPart = null;
+      }
+      return { main, part, area };
+    }
 
     let body = "";
     let legend = "";
     if (m.kind === "single" || m.kind === "total") {
       // Monochrome: one solid line with a faint fill, the comparison dotted with no fill
+      const c = curves(m.cur);
+      const p = m.prev ? curves(m.prev) : null;
       body = `<defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.06"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
-        <path d="${area(m.cur)}" fill="url(#fill)"/>
-        ${m.prev ? dotted(m.prev) : ""}<path class="s-current" vector-effect="non-scaling-stroke" d="${path(m.cur)}"/>`;
-      legend = `<span><i class="line"></i>${esc(m.label)}</span>${m.prev ? `<span><i class="line dotted"></i>${esc(m.prevLabel)}</span>` : ""}`;
+        <path d="${c.area}" fill="url(#fill)"/>
+        ${p ? `<path class="s-previous" vector-effect="non-scaling-stroke" d="${p.main}"/><path class="s-previous s-partial" vector-effect="non-scaling-stroke" d="${p.part}"/>` : ""}
+        <path class="s-current" vector-effect="non-scaling-stroke" d="${c.main}"/><path class="s-current s-partial" vector-effect="non-scaling-stroke" d="${c.part}"/>`;
+      legend = `<span><i class="line"></i>${esc(m.label)}</span>${m.prev ? `<span><i class="line dotted"></i>${esc(m.prevLabel)}</span>` : ""}${
+        m.buckets.some((b) => !b.full) ? `<span><i class="line partial"></i>Partial ${esc(m.unit)}</span>` : ""
+      }`;
     } else {
-      m.lines.forEach((l) => (body += `<path class="s-index" style="--c:${COLORS[l.p]}" vector-effect="non-scaling-stroke" d="${path(l.values)}"/>`));
+      m.lines.forEach((l) => {
+        const c = curves(l.values);
+        body += `<path class="s-index" style="--c:${COLORS[l.p]}" vector-effect="non-scaling-stroke" d="${c.main}"/>`;
+      });
       legend =
         m.lines.map((l) => `<span><i class="line" style="--c:${COLORS[l.p]}"></i>${esc(l.name)}</span>`).join("") +
         `<span>7-day average views, ${esc(fmtDay(m.baseT))} = 100</span>`;
     }
 
-    // X axis: both ends plus two points between
+    // X axis: both ends plus two points between; a small tick under each bucket with a post
     const ticks = [0, Math.round((n - 1) / 3), Math.round(((n - 1) * 2) / 3), n - 1].filter((v, i, a) => a.indexOf(v) === i);
     const axis = ticks.map((i) => `<span style="left:${n === 1 ? 50 : (i / (n - 1)) * 100}%">${esc(axisLabel(m, i))}</span>`).join("");
+    const postTicks = m.posts
+      ? m.posts.map((ps, i) => (ps.length ? `<i style="left:${n === 1 ? 50 : (i / (n - 1)) * 100}%"></i>` : "")).join("")
+      : "";
     const toggle = m.toggle
       ? UI.TextTabs({
           id: "chart-mode",
@@ -707,22 +804,24 @@
           <line class="s-rule" x1="0" x2="0" y1="0" y2="${H}" vector-effect="non-scaling-stroke" visibility="hidden"/>
         </svg>
       </div>
+      ${postTicks ? `<div class="post-ticks" aria-hidden="true">${postTicks}</div>` : ""}
       <div class="axis" aria-hidden="true">${axis}</div>
       <figcaption class="chart-legend">${legend}</figcaption>
     </figure>`;
   }
 
   // ---------- Tooltip ----------
-  // One component for every chart. A row is { marker: "dot" | "ring" | null, color, label, value, extra }.
+  // One component for every chart. A row is { marker: "dot" | "ring" | null, color, label, value, extra, cls }.
+  // `footer` is extra HTML below a hairline (the post marker).
 
-  function Tooltip({ heading, compare, total, rows }) {
+  function Tooltip({ heading, compare, total, rows, footer }) {
     const row = (r, cls) =>
       `<div class="tip-row${cls ? " " + cls : ""}"><span class="marker${r.marker ? " m-" + r.marker : ""}"${r.color ? ` style="--c:${r.color}"` : ""}></span><dt>${esc(r.label)}</dt><dd>${esc(
         r.value
       )}</dd><dd class="extra">${esc(r.extra || "")}</dd></div>`;
-    return `<p class="tip-heading">${esc(heading)}</p>${compare ? `<p class="tip-compare">${esc(compare)}</p>` : ""}<dl>${total ? row(total, "total") + '<hr class="tip-rule" />' : ""}${rows
-      .map((r) => row(r))
-      .join("")}</dl>`;
+    return `<p class="tip-heading">${esc(heading)}</p>${compare ? `<p class="tip-compare">${esc(compare)}</p>` : ""}<dl${!total && !rows.some((r) => r.marker) ? ' class="plain"' : ""}>${total ? row(total, "total") + '<hr class="tip-rule" />' : ""}${rows
+      .map((r) => row(r, r.cls))
+      .join("")}</dl>${footer ? `<hr class="tip-rule tip-rule-footer" />${footer}` : ""}`;
   }
 
   // Whole-number shares that add up to exactly 100 (largest remainder).
@@ -739,43 +838,47 @@
     return out;
   }
 
+  // The post marker: the best-performing post in the bucket, and how many more there were
+  function postMarker(posts, unit) {
+    if (!posts || !posts.length) return "";
+    const top = posts[0];
+    const when = { hour: "posted this hour", day: "posted this day", week: "posted this week", month: "posted this month" }[unit];
+    const more = posts.length > 1 ? ` · +${posts.length - 1} more` : "";
+    const views = isNum(top.views) ? ` · ${exact(top.views)} views` : "";
+    const thumb = top.thumbnail
+      ? `<img src="${esc(top.thumbnail)}" alt="" loading="lazy" decoding="async" />`
+      : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.5v9l7.5-4.5z"/></svg>`;
+    return `<div class="tip-post"><span class="tip-thumb">${thumb}</span><span class="tip-post-text"><span class="tip-post-title">“${esc(top.title)}”</span><span class="tip-post-meta">${esc(
+      when + views + more
+    )}</span></span></div>`;
+  }
+
   function tooltipFor(m, i) {
+    const { heading, compare } = headingFor(m, i);
     if (m.kind === "single") {
-      const t = m.ts[i];
-      const pt = m.prevTs && m.prevTs[i];
       const v = m.cur[i];
       const pv = m.prev && m.prev[i];
-      return Tooltip({
-        heading: when(t, m.hourly),
-        compare: pt != null ? `vs ${when(pt, m.hourly)}` : null,
-        rows: [
-          { marker: "dot", color: "var(--stroke)", label: m.label, value: v == null ? "No data" : exact(v) },
-          ...(m.prev ? [{ marker: "ring", color: "var(--stroke)", label: "Previous period", value: pv == null ? "No data" : exact(pv), extra: change(v, pv) || "" }] : []),
-        ],
-      });
+      const rows = [{ label: m.label, value: v == null ? "No data" : exact(v), extra: change(v, pv) || "", cls: "primary" }];
+      const s = m.secondary && m.secondary.values[i];
+      if (isNum(s)) rows.push({ label: m.secondary.label, value: m.secondary.format === "number" ? exact(s) : format(s, m.secondary.format), cls: "secondary" });
+      return Tooltip({ heading, compare, rows, footer: postMarker(m.posts[i], m.unit) });
     }
     if (m.kind === "total") {
-      const pb = m.prevBuckets && m.prevBuckets[i];
       const vals = ORDER.map((p) => m.by[p][i] || 0);
       const pct = shares(vals);
       // The platform colours appear here and nowhere else on the Total chart
       const rows = ORDER.map((p, k) => ({ marker: "dot", color: COLORS[p], label: NAMES[p], value: exact(vals[k]), extra: `${pct[k]}%`, v: vals[k] })).sort((a, b) => b.v - a.v);
       const tot = m.cur[i];
       const pv = m.prev && m.prev[i];
-      return Tooltip({
-        heading: bucketLabel(m.buckets[i], m.unit),
-        compare: pb ? `vs ${bucketLabel(pb, m.unit)}` : null,
-        total: { label: "Total", value: tot == null ? "No data" : exact(tot), extra: change(tot, pv) || "" },
-        rows,
-      });
+      return Tooltip({ heading, compare, total: { label: "Total", value: tot == null ? "No data" : exact(tot), extra: change(tot, pv) || "" }, rows });
     }
     const rows = m.lines
       .map((l) => ({ marker: "dot", color: COLORS[l.p], label: l.name, value: l.values[i] == null ? "No data" : l.values[i].toFixed(1), v: l.values[i] || 0 }))
       .sort((a, b) => b.v - a.v);
-    return Tooltip({ heading: bucketLabel(m.buckets[i], m.unit), compare: `vs ${dayLong(m.baseT)} = 100`, rows });
+    return Tooltip({ heading, compare, rows });
   }
 
-  // Points to mark at index i, as { v, color, ring }. The Total chart gets one dot, on its line.
+  // Points to mark at index i, as { v, color, ring }
   function marksFor(m, i) {
     if (m.kind === "single") return [{ v: m.cur[i], color: "var(--stroke)" }, ...(m.prev ? [{ v: m.prev[i], color: "var(--stroke)", ring: true }] : [])];
     if (m.kind === "total") return [{ v: m.cur[i], color: "var(--stroke)" }];
@@ -886,10 +989,7 @@
     });
   }
 
-  const hourLabel = (t) => {
-    const h = new Date(t).getUTCHours();
-    return `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`;
-  };
+  const hourLabel = (t) => `${String(new Date(t).getUTCHours()).padStart(2, "0")}:00`;
   function niceMax(v) {
     const step = Math.pow(10, Math.floor(Math.log10(v)));
     for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (v <= m * step) return m * step;

@@ -15,12 +15,19 @@ window.makeSampleData = function (real) {
   const end = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
   const iso = (t) => new Date(t).toISOString().slice(0, 10);
 
-  // A daily curve: slow growth, weekly rhythm and the odd video that takes off.
-  function curve(base, spikiness) {
+  // Posting days: roughly every `gap` days, with a little jitter
+  function postDays(gap, offset) {
+    const out = [];
+    for (let i = offset; i < DAYS; i += gap + Math.floor(rand() * 3) - 1) out.push(i);
+    return out;
+  }
+  // A daily curve: slow growth, weekly rhythm, and the odd post that takes off on the day it goes up.
+  function curve(base, spikiness, posted) {
     const out = [];
     let spike = 0;
+    const on = new Set(posted || []);
     for (let i = 0; i < DAYS; i++) {
-      if (rand() < 0.05) spike = base * (2 + rand() * spikiness);
+      if (on.has(i) && rand() < 0.3) spike = base * (2 + rand() * spikiness);
       spike *= 0.6;
       const weekly = 1 + 0.15 * Math.sin((i / 7) * Math.PI * 2);
       out.push(Math.round(base * (0.7 + (i / DAYS) * 0.6) * weekly * (0.8 + rand() * 0.4) + spike));
@@ -44,12 +51,32 @@ window.makeSampleData = function (real) {
     return series.map((v, i) => ({ date: iso(end - (DAYS - 1 - i) * 864e5), hours: hoursFor(v), ...fn(v, i) }));
   }
 
-  const tt = curve(9000, 3);
+  const TITLES = {
+    tiktok: ["I ranked every upgrade on my desk", "The $40 mod that fixed my setup", "Cable management in 60 seconds", "Is this the cleanest desk on TikTok?", "Desk setup glow-up", "Keyboard sound test", "Monitor arm vs stand", "My setup at 3am", "Hidden storage under my desk", "Rating your desk setups"],
+    instagram: ["Desk setup, final form", "Night mode setup", "New keyboard day", "Before and after: desk edition", "Minimal setup tour", "Lighting changes everything"],
+    youtube: ["My 2026 desk setup tour", "Standing desk after a year: worth it?", "The best keyboard I've used", "Building a desk setup from scratch", "Every accessory on my desk, ranked"],
+  };
+  // Placeholder posts, best for checking the tooltip's post marker
+  function postsFor(p, days, curveVals, perView) {
+    return days.map((i, k) => ({
+      date: iso(end - (DAYS - 1 - i) * 864e5),
+      time: `${String(12 + Math.floor(rand() * 9)).padStart(2, "0")}:00`,
+      title: TITLES[p][k % TITLES[p].length],
+      thumbnail: null,
+      url: null,
+      views: Math.round(curveVals[i] * perView * (0.6 + rand() * 0.8)),
+      engagementRate: +(5 + rand() * 6).toFixed(1),
+    }));
+  }
+
+  const ttDays = postDays(3, 1);
+  ttDays.push(ttDays[ttDays.length - 4]); // two TikToks on the same day, for "+1 more"
+  const tt = curve(9000, 3, ttDays);
   let ttFollowers = 5400;
   const tiktok = build(tt, (v) => {
     ttFollowers += Math.round(v / 900);
     return {
-      m: { views: v, followers: ttFollowers, profileViews: Math.round(v * 0.03), likes: Math.round(v * 0.07), comments: Math.round(v * 0.004), shares: Math.round(v * 0.006) },
+      m: { views: v, followers: ttFollowers, profileViews: Math.round(v * 0.03), likes: Math.round(v * (0.055 + rand() * 0.03)), comments: Math.round(v * 0.004), shares: Math.round(v * 0.006) },
       l: {
         topVideos: split(v, videos(9, "Sample TikTok")),
         trafficSources: split(v, { "For You": 74, Search: 9, "Personal profile": 7, Following: 6, Sound: 4 }),
@@ -59,7 +86,8 @@ window.makeSampleData = function (real) {
     };
   });
 
-  const ig = curve(2600, 4);
+  const igDays = postDays(4, 2);
+  const ig = curve(2600, 4, igDays);
   let igFollowers = 560;
   const igPlays = [];
   const instagram = build(ig, (v, i) => {
@@ -80,7 +108,8 @@ window.makeSampleData = function (real) {
     };
   });
 
-  const yt = curve(700, 3);
+  const ytDays = postDays(9, 3);
+  const yt = curve(700, 3, ytDays);
   let ytSubs = 380;
   const youtube = build(yt, (v) => {
     ytSubs += Math.round(v / 600);
@@ -118,9 +147,9 @@ window.makeSampleData = function (real) {
     sample: true,
     updated: iso(end),
     platforms: {
-      tiktok: { ...real.platforms.tiktok, days: tiktok },
-      instagram: { ...real.platforms.instagram, days: instagram },
-      youtube: { ...real.platforms.youtube, days: youtube },
+      tiktok: { ...real.platforms.tiktok, days: tiktok, posts: postsFor("tiktok", ttDays, tt, 0.45) },
+      instagram: { ...real.platforms.instagram, days: instagram, posts: postsFor("instagram", igDays, ig, 0.6) },
+      youtube: { ...real.platforms.youtube, days: youtube, posts: postsFor("youtube", ytDays, yt, 2.5) },
     },
     deliverables: real.deliverables.length
       ? real.deliverables

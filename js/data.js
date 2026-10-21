@@ -10,6 +10,9 @@
 //   { date: "2026-10-21", hours: [24 numbers, optional, for the chart on single-day ranges],
 //     m: { ...daily totals }, l: { listName: { "Row label": number } } }
 // The keys each platform understands are listed in js/platforms.js.
+// `posts` lists what went up, so the chart tooltip can say which post a spike came from:
+//   { date: "2026-10-09", time: "18:00" (optional, places it on hourly charts), title: "I ranked every upgrade on my desk",
+//     thumbnail: "assets/posts/ranked.jpg", url: "https://…", views: 48200, engagementRate: 9.1 }
 
 window.MEDIA_KIT = {
   // Date the numbers were last brought up to date (YYYY-MM-DD).
@@ -23,18 +26,21 @@ window.MEDIA_KIT = {
       // Same figure as byalyxx.com/media-kit (Sep 23, 2026).
       snapshot: { followers: "7k+" },
       days: [],
+      posts: [],
     },
     instagram: {
       handle: "@byalyxx",
       url: "https://www.instagram.com/byalyxx/",
       snapshot: { followers: "900+" },
       days: [],
+      posts: [],
     },
     youtube: {
       handle: "@byalyxx",
       url: "https://www.youtube.com/@byalyxx",
       snapshot: { subscribers: "600+" },
       days: [],
+      posts: [],
     },
   },
 
